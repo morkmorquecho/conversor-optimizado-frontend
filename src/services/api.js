@@ -49,9 +49,14 @@ function isFormattedApiError(response) {
 // ── INTERCEPTOR ──────────────────────────────────────────────────────────────
 api.interceptors.response.use(
   (response) => {
-    // 204 (sin contenido) y 304 (no modificado, servido desde caché del
-    // navegador) no traen body utilizable — evita que revienten al
-    // desestructurar response.data.
+    // Descargas binarias (Excel, etc.): el body ya es un Blob, no el shape
+    // {success, data, errors, message}. Regresamos la response completa
+    // para que el caller tenga acceso a response.data (blob) y
+    // response.headers (Content-Disposition con el nombre real del archivo).
+    if (response.config.responseType === 'blob') {
+      return response
+    }
+
     if (response.status === 204 || response.status === 304 || !response.data) {
       return null
     }
@@ -63,8 +68,23 @@ api.interceptors.response.use(
     return data
   },
 
-  (error) => {
-    const { response } = error
+  async (error) => {
+    const { response, config } = error
+
+    // Si pedimos blob pero el backend respondió un error, axios igual
+    // envuelve el body como Blob. Hay que leerlo como texto y parsear
+    // el JSON real antes de poder formatear el error.
+    if (config?.responseType === 'blob' && response?.data instanceof Blob) {
+      try {
+        const text = await response.data.text()
+        const parsed = JSON.parse(text)
+        if (parsed?.success === false) {
+          return Promise.reject(createApiError(parsed))
+        }
+      } catch {
+        // el blob no era JSON parseable; cae al manejo genérico de abajo
+      }
+    }
 
     if (isFormattedApiError(response)) {
       return Promise.reject(createApiError(response.data))

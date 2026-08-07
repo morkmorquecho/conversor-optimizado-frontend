@@ -42,6 +42,13 @@ function goToCatalog(catalogId) {
     params: { supplierId, catalogId },
   })
 }
+
+function goToTemplate(templateId) {
+  router.push({
+    name: 'extraction-process',
+    params: { supplierId, templateId },
+  })
+}
 </script>
 
 <template>
@@ -118,9 +125,12 @@ function goToCatalog(catalogId) {
 
           <ul v-else class="item-list">
             <li v-for="template in templates" :key="template.id">
-              <div
-                class="item-card item-card--static"
+              <button
+                class="item-card"
                 :class="{ 'item-card--inactive': !template.is_active }"
+                type="button"
+                :disabled="!template.is_active"
+                @click="goToTemplate(template.id)"
               >
                 <span class="item-card__main">
                   <span class="item-card__name">{{ template.name }}</span>
@@ -128,13 +138,30 @@ function goToCatalog(catalogId) {
                     {{ template.layout }} · {{ template.document_type.toUpperCase() }}
                   </span>
                 </span>
-                <span
-                  class="status-badge"
-                  :class="template.is_active ? 'status-badge--active' : 'status-badge--inactive'"
-                >
-                  {{ template.is_active ? 'Activo' : 'Inactivo' }}
+                <span class="item-card__side">
+                  <span
+                    class="status-badge"
+                    :class="template.is_active ? 'status-badge--active' : 'status-badge--inactive'"
+                  >
+                    {{ template.is_active ? 'Activo' : 'Inactivo' }}
+                  </span>
+                  <svg
+                    v-if="template.is_active"
+                    class="item-card__chevron"
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M7.5 4.5L13 10L7.5 15.5"
+                      stroke="currentColor"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
                 </span>
-              </div>
+              </button>
             </li>
           </ul>
         </section>
@@ -271,6 +298,10 @@ function goToCatalog(catalogId) {
 .item-card:not(.item-card--static):hover {
   border-color: var(--color-navy-700);
   background: var(--color-navy-50);
+}
+
+.item-card:disabled {
+  cursor: default;
 }
 
 .item-card--inactive {

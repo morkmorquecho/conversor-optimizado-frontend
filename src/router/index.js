@@ -93,13 +93,14 @@ const routes = [
     meta: { title: 'Detalle de fila' },
   },
 
-  // --- extraction ---
+  // --- extraction (se dispara desde un template de un proveedor) ---
   {
     // POST /api/v1/extractions/process-xlsx/
-    path: '/extraccion/procesar-xlsx',
-    name: 'extraction-process-xlsx',
+    path: '/proveedores/:supplierId/templates/:templateId/procesar',
+    name: 'extraction-process',
     component: ExtractionProcessView,
-    meta: { title: 'Procesar factura desde Excel' },
+    props: true,
+    meta: { title: 'Procesar factura' },
   },
 
   // --- fallback ---
