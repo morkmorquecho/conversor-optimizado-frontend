@@ -1,4 +1,3 @@
-// src/services/catalogService.js
 import api from './api'
 
 const catalogService = {
@@ -24,7 +23,7 @@ const catalogService = {
   },
 
   getSupplierCatalogsSummary(supplierId, params = {}) {
-    return api.get(`/catalogs/suppliers/${supplierId}/catalogs/`, { params })
+    return api.get(`/catalogs/suppliers/${supplierId}/catalogs-summary/`, { params })
   },
 
   getSupplierTemplates(supplierId, params = {}) {
@@ -32,14 +31,16 @@ const catalogService = {
   },
 
   // ── SUPPLIER CATALOGS ──
-  getCatalogs(supplierId, params = {}) {
-    return api.get(`/catalogs/suppliers/${supplierId}/catalogs/`, { params })
+  async getCatalogs(supplierId, params = {}) {
+    const data = await api.get(`/catalogs/suppliers/${supplierId}/catalogs/`, { params })
+    return data.results
   },
 
   getCatalog(supplierId, catalogId) {
     return api.get(`/catalogs/suppliers/${supplierId}/catalogs/${catalogId}/`)
   },
 
+  // data: { name, pivot_field_name, columns: [{ source_name }] }
   createCatalog(supplierId, data) {
     return api.post(`/catalogs/suppliers/${supplierId}/catalogs/`, data)
   },
@@ -83,6 +84,7 @@ const catalogService = {
 
   uploadCatalogRows(supplierId, catalogId, file) {
     const formData = new FormData()
+    formData.append('supplier_catalog', catalogId)
     formData.append('file', file)
     return api.post(
       `/catalogs/suppliers/${supplierId}/catalogs/${catalogId}/rows/upload/`,

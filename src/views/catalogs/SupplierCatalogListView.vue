@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
-import catalogService from '../../services/catalogService'
+import catalogService from '../../services/catalogs'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,10 +13,20 @@ const catalogs = ref([])
 const isLoading = ref(true)
 const loadError = ref(null)
 
-const showCreateForm = ref(false)
+const showCreateForm = ref(route.query.crear === '1')
+
 const isCreating = ref(false)
 const createError = ref(null)
 const newCatalog = ref({ name: '', pivot_field_name: '' })
+const newColumns = ref([''])
+
+function addColumnField() {
+  newColumns.value.push('')
+}
+
+function removeColumnField(index) {
+  newColumns.value.splice(index, 1)
+}
 
 async function loadData() {
   isLoading.value = true
@@ -45,10 +55,21 @@ async function handleCreate() {
   isCreating.value = true
   createError.value = null
   try {
-    const created = await catalogService.createCatalog(supplierId, newCatalog.value)
-    catalogs.value.push({ ...created, rows_count: 0 })
+    const columns = newColumns.value
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .map((source_name) => ({ source_name }))
+
+    await catalogService.createCatalog(supplierId, {
+      name: newCatalog.value.name,
+      pivot_field_name: newCatalog.value.pivot_field_name,
+      columns,
+    })
+
     newCatalog.value = { name: '', pivot_field_name: '' }
+    newColumns.value = ['']
     showCreateForm.value = false
+    await loadData()
   } catch (err) {
     createError.value = err
   } finally {
@@ -77,43 +98,75 @@ async function handleCreate() {
         </button>
       </header>
 
-      <form v-if="showCreateForm" class="create-form" @submit.prevent="handleCreate">
-        <div class="field">
-          <label class="field__label" for="name">Nombre</label>
-          <input
-            id="name"
-            v-model="newCatalog.name"
-            class="field__input"
-            type="text"
-            placeholder="Catálogo de Fracciones Suzuki"
-            required
-          />
-        </div>
+      <div v-if="showCreateForm" class="create-panel">
+        <form class="create-form" @submit.prevent="handleCreate">
+          <div class="field">
+            <label class="field__label" for="name">Nombre</label>
+            <input
+              id="name"
+              v-model="newCatalog.name"
+              class="field__input"
+              type="text"
+              placeholder="Catálogo de Fracciones Suzuki"
+              required
+            />
+          </div>
 
-        <div class="field">
-          <label class="field__label" for="pivot">Columna pivote</label>
-          <input
-            id="pivot"
-            v-model="newCatalog.pivot_field_name"
-            class="field__input field__input--mono"
-            type="text"
-            placeholder="PART"
-            required
-          />
-          <p class="field__hint">Nombre de la columna en el archivo fuente usada como llave.</p>
-        </div>
+          <div class="field">
+            <label class="field__label" for="pivot">Columna pivote</label>
+            <input
+              id="pivot"
+              v-model="newCatalog.pivot_field_name"
+              class="field__input field__input--mono"
+              type="text"
+              placeholder="PART"
+              required
+            />
+            <p class="field__hint">Nombre de la columna en el archivo fuente usada como llave.</p>
+          </div>
 
-        <p v-if="createError" class="state state--error">
-          {{ createError.message }}
-          <span v-if="createError.type === 'field_errors'">
-            — {{ Object.values(createError.context).flat().join(' ') }}
-          </span>
-        </p>
+          <div class="field">
+            <label class="field__label">Columnas a extraer</label>
+            <p class="field__hint">
+              Solo estas columnas se guardarán al cargar un Excel más adelante — el resto del
+              archivo se ignora.
+            </p>
 
-        <button class="btn btn--primary" type="submit" :disabled="isCreating">
-          {{ isCreating ? 'Creando…' : 'Crear catálogo' }}
-        </button>
-      </form>
+            <div class="column-row" v-for="(col, index) in newColumns" :key="index">
+              <input
+                v-model="newColumns[index]"
+                class="field__input field__input--mono"
+                type="text"
+                placeholder="FraccionTIGIE"
+              />
+              <button
+                v-if="newColumns.length > 1"
+                class="column-row__remove"
+                type="button"
+                title="Quitar columna"
+                @click="removeColumnField(index)"
+              >
+                ✕
+              </button>
+            </div>
+
+            <button class="btn btn--secondary" type="button" @click="addColumnField">
+              + Agregar columna
+            </button>
+          </div>
+
+          <p v-if="createError" class="state state--error">
+            {{ createError.message }}
+            <span v-if="createError.type === 'field_errors'">
+              — {{ Object.values(createError.context).flat().join(' ') }}
+            </span>
+          </p>
+
+          <button class="btn btn--primary" type="submit" :disabled="isCreating">
+            {{ isCreating ? 'Creando…' : 'Crear catálogo' }}
+          </button>
+        </form>
+      </div>
 
       <p v-if="catalogs.length === 0" class="state">
         Este proveedor todavía no tiene catálogos.
@@ -227,7 +280,17 @@ async function handleCreate() {
   cursor: not-allowed;
 }
 
-.create-form {
+.btn--secondary {
+  color: var(--color-navy-900);
+  background: var(--color-navy-50);
+  align-self: flex-start;
+}
+
+.btn--secondary:hover {
+  background: var(--color-gray-200);
+}
+
+.create-panel {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -235,6 +298,49 @@ async function handleCreate() {
   margin-bottom: var(--space-6);
   background: var(--color-navy-50);
   border-radius: var(--radius-md);
+}
+
+.column-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.column-row .field__input {
+  flex: 1;
+}
+
+.column-row__remove {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.column-row__remove:hover {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.create-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field__hint--block {
+  background: var(--color-white);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin: 0;
 }
 
 .field {

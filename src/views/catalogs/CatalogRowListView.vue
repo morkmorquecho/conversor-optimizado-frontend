@@ -15,6 +15,9 @@ const currentPage = ref(1)
 const hasNext = ref(false)
 const hasPrevious = ref(false)
 
+const search = ref('')
+let searchDebounceTimer = null
+
 const isLoading = ref(true)
 const error = ref(null)
 
@@ -34,7 +37,10 @@ async function loadRows(page = 1) {
   isLoading.value = true
   error.value = null
   try {
-    const result = await catalogService.getCatalogRows(supplierId, catalogId, { page })
+    const params = { page }
+    if (search.value.trim()) params.search = search.value.trim()
+
+    const result = await catalogService.getCatalogRows(supplierId, catalogId, params)
     rows.value = result.results
     count.value = result.count
     hasNext.value = Boolean(result.next)
@@ -45,6 +51,18 @@ async function loadRows(page = 1) {
   } finally {
     isLoading.value = false
   }
+}
+
+function handleSearchInput() {
+  clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    loadRows(1)
+  }, 400)
+}
+
+function clearSearch() {
+  search.value = ''
+  loadRows(1)
 }
 
 onMounted(async () => {
@@ -98,8 +116,26 @@ function goToRow(rowId) {
         </div>
       </header>
 
+      <div class="search-bar">
+        <svg class="search-bar__icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle cx="9" cy="9" r="6.5" stroke="currentColor" stroke-width="1.5" />
+          <path d="M14 14L18 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+        <input
+          v-model="search"
+          type="text"
+          class="search-bar__input"
+          :placeholder="`Buscar por ${catalog?.pivot_field_name || 'pivote'}…`"
+          @input="handleSearchInput"
+        />
+        <button v-if="search" class="search-bar__clear" type="button" @click="clearSearch">
+          ✕
+        </button>
+      </div>
+
       <p v-if="rows.length === 0" class="state">
-        Este catálogo todavía no tiene filas cargadas.
+        <template v-if="search">No hay filas que coincidan con "{{ search }}".</template>
+        <template v-else>Este catálogo todavía no tiene filas cargadas.</template>
       </p>
 
       <template v-else>
@@ -224,6 +260,60 @@ function goToRow(rowId) {
   color: var(--color-gray-500);
   background: var(--color-gray-200);
   cursor: not-allowed;
+}
+
+.search-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--space-4);
+  max-width: 360px;
+}
+
+.search-bar__icon {
+  position: absolute;
+  left: var(--space-3);
+  width: 16px;
+  height: 16px;
+  color: var(--color-gray-500);
+  pointer-events: none;
+}
+
+.search-bar__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-8) var(--space-2) 2.25rem;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  color: var(--color-gray-900);
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.search-bar__input::placeholder {
+  color: var(--color-gray-500);
+}
+
+.search-bar__input:focus {
+  outline: none;
+  border-color: var(--color-navy-700);
+  box-shadow: 0 0 0 3px var(--color-navy-50);
+}
+
+.search-bar__clear {
+  position: absolute;
+  right: var(--space-2);
+  background: none;
+  border: none;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  padding: var(--space-1);
+}
+
+.search-bar__clear:hover {
+  color: var(--color-navy-700);
 }
 
 .table-wrapper {

@@ -70,6 +70,13 @@ function goToTemplate(templateId) {
           <div class="section__header">
             <h2 class="section__title">Catálogos</h2>
             <span class="section__count">{{ catalogs.length }}</span>
+            <RouterLink
+              :to="{ path: `/proveedores/${supplierId}/catalogos`, query: { crear: '1' } }"
+              class="section__add-btn"
+              title="Añadir catálogo"
+            >
+              + Añadir
+            </RouterLink>
           </div>
 
           <p v-if="catalogs.length === 0" class="section__empty">
@@ -239,6 +246,21 @@ function goToTemplate(templateId) {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
+}
+
+.section__add-btn {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-navy-700);
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.section__add-btn:hover {
+  background: var(--color-navy-50);
 }
 
 .section__title {
