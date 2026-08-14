@@ -28,13 +28,29 @@ function removeColumnField(index) {
   newColumns.value.splice(index, 1)
 }
 
+// Trae todas las páginas de un endpoint paginado (PageNumberPagination de DRF).
+async function fetchAll(fetcher) {
+  let page = 1
+  let all = []
+  let hasNext = true
+
+  while (hasNext) {
+    const { results, next } = await fetcher({ page })
+    all = all.concat(results)
+    hasNext = Boolean(next)
+    page += 1
+  }
+
+  return all
+}
+
 async function loadData() {
   isLoading.value = true
   loadError.value = null
   try {
     const [supplierData, catalogsData] = await Promise.all([
       catalogService.getSupplier(supplierId),
-      catalogService.getCatalogs(supplierId),
+      fetchAll((params) => catalogService.getCatalogs(supplierId, params)),
     ])
     supplier.value = supplierData
     catalogs.value = catalogsData

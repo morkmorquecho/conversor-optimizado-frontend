@@ -14,14 +14,30 @@ const templates = ref([])
 const isLoading = ref(true)
 const error = ref(null)
 
+// Trae todas las páginas de un endpoint paginado (PageNumberPagination de DRF).
+async function fetchAll(fetcher) {
+  let page = 1
+  let all = []
+  let hasNext = true
+
+  while (hasNext) {
+    const { results, next } = await fetcher({ page })
+    all = all.concat(results)
+    hasNext = Boolean(next)
+    page += 1
+  }
+
+  return all
+}
+
 async function loadSupplierDetail() {
   isLoading.value = true
   error.value = null
   try {
     const [supplierData, catalogsData, templatesData] = await Promise.all([
       catalogService.getSupplier(supplierId),
-      catalogService.getSupplierCatalogsSummary(supplierId),
-      catalogService.getSupplierTemplates(supplierId),
+      fetchAll((params) => catalogService.getSupplierCatalogsSummary(supplierId, params)),
+      fetchAll((params) => catalogService.getSupplierTemplates(supplierId, params)),
     ])
 
     supplier.value = supplierData
@@ -124,6 +140,13 @@ function goToTemplate(templateId) {
           <div class="section__header">
             <h2 class="section__title">Templates</h2>
             <span class="section__count">{{ templates.length }}</span>
+            <RouterLink
+              :to="{ path: `/proveedores/${supplierId}/templates`, query: { crear: '1' } }"
+              class="section__add-btn"
+              title="Añadir template"
+            >
+              + Añadir
+            </RouterLink>
           </div>
 
           <p v-if="templates.length === 0" class="section__empty">

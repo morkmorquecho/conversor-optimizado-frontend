@@ -1,19 +1,25 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 // Vistas — agrupadas por recurso según el YAML actualizado
-const HomeView = () => import('../views/home/HomeView.vue')
-const CatalogDeduplicateView = () => import('../views/catalogs/CatalogDeduplicateView.vue')
+const HomeView = () => import('@/views/home/HomeView.vue')
+const CatalogDeduplicateView = () => import('@/views/catalogs/CatalogDeduplicateView.vue')
 
-const SupplierDetailView = () => import('../views/suppliers/SupplierDetailView.vue')
+const SupplierDetailView = () => import('@/views/suppliers/SupplierDetailView.vue')
 
-const SupplierCatalogListView = () => import('../views/catalogs/SupplierCatalogListView.vue')
-const SupplierCatalogDetailView = () => import('../views/catalogs/SupplierCatalogDetailView.vue')
+const SupplierCatalogListView = () => import('@/views/catalogs/SupplierCatalogListView.vue')
+const SupplierCatalogDetailView = () => import('@/views/catalogs/SupplierCatalogDetailView.vue')
 
-const CatalogRowListView = () => import('../views/catalogs/CatalogRowListView.vue')
-const CatalogRowDetailView = () => import('../views/catalogs/CatalogRowDetailView.vue')
-const CatalogRowUploadView = () => import('../views/catalogs/CatalogRowUploadView.vue')
+const CatalogRowListView = () => import('@/views/catalogs/CatalogRowListView.vue')
+const CatalogRowDetailView = () => import('@/views/catalogs/CatalogRowDetailView.vue')
+const CatalogRowUploadView = () => import('@/views/catalogs/CatalogRowUploadView.vue')
 
-const ExtractionProcessView = () => import('../views/extraction/ExtractionProcessView.vue')
+const ExtractionProcessView = () => import('@/views/extraction/ExtractionProcessView.vue')
+
+const LayoutListView = () => import('@/views/layouts/LayoutListView.vue')
+const LayoutDetailView = () => import('@/views/layouts/LayoutDetailView.vue')
+
+const TemplateListView = () => import('@/views/templates/TemplateListView.vue')
+const TemplateDetailView = () => import('@/views/templates/TemplateDetailView.vue')
 
 const routes = [
   // --- home: buscador de proveedores (GET /api/v1/catalogs/suppliers/) ---
@@ -93,6 +99,24 @@ const routes = [
     meta: { title: 'Detalle de fila' },
   },
 
+  // --- templates (anidado bajo proveedor) ---
+  {
+    // GET/POST /api/v1/suppliers/{supplier_pk}/templates/
+    path: '/proveedores/:supplierId/templates',
+    name: 'template-list',
+    component: TemplateListView,
+    props: true,
+    meta: { title: 'Templates del proveedor' },
+  },
+  {
+    // GET/PUT/PATCH/DELETE /api/v1/suppliers/{supplier_pk}/templates/{id}/
+    path: '/proveedores/:supplierId/templates/:templateId',
+    name: 'template-detail',
+    component: TemplateDetailView,
+    props: true,
+    meta: { title: 'Detalle de template' },
+  },
+
   // --- extraction (se dispara desde un template de un proveedor) ---
   {
     // POST /api/v1/extractions/process-xlsx/
@@ -101,6 +125,23 @@ const routes = [
     component: ExtractionProcessView,
     props: true,
     meta: { title: 'Procesar factura' },
+  },
+
+  // --- layouts (independientes de proveedor) ---
+  {
+    // GET/POST /api/v1/layouts/
+    path: '/layouts',
+    name: 'layout-list',
+    component: LayoutListView,
+    meta: { title: 'Layouts' },
+  },
+  {
+    // GET/PUT/PATCH/DELETE /api/v1/layouts/{id}/ + fields anidados
+    path: '/layouts/:layoutId',
+    name: 'layout-detail',
+    component: LayoutDetailView,
+    props: true,
+    meta: { title: 'Detalle de layout' },
   },
 
   // --- fallback ---

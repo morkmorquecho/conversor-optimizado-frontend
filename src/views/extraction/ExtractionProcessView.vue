@@ -22,13 +22,29 @@ const isProcessing = ref(false)
 const processError = ref(null)
 const lastDownloadedFilename = ref(null)
 
+// Trae todas las páginas de un endpoint paginado (PageNumberPagination de DRF).
+async function fetchAll(fetcher) {
+  let page = 1
+  let all = []
+  let hasNext = true
+
+  while (hasNext) {
+    const { results, next } = await fetcher({ page })
+    all = all.concat(results)
+    hasNext = Boolean(next)
+    page += 1
+  }
+
+  return all
+}
+
 async function loadContext() {
   isLoadingContext.value = true
-  loadError.value = null    
+  loadError.value = null
   try {
     const [templates, supplierCatalogs] = await Promise.all([
-      catalogService.getSupplierTemplates(supplierId),
-      catalogService.getSupplierCatalogsSummary(supplierId),
+      fetchAll((params) => catalogService.getSupplierTemplates(supplierId, params)),
+      fetchAll((params) => catalogService.getSupplierCatalogsSummary(supplierId, params)),
     ])
 
     template.value = templates.find((t) => String(t.id) === String(templateId)) || null
