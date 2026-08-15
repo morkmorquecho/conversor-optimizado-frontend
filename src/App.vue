@@ -8,6 +8,7 @@ import { RouterLink, RouterView } from 'vue-router'
       <RouterLink to="/" class="app-header__brand">Invoice Converter</RouterLink>
       <nav class="app-header__nav">
         <RouterLink to="/layouts" class="app-header__link">Layouts</RouterLink>
+        <RouterLink to="/reglas" class="app-header__link">Reglas</RouterLink>
       </nav>
     </header>
 

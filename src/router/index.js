@@ -21,6 +21,9 @@ const LayoutDetailView = () => import('@/views/layouts/LayoutDetailView.vue')
 const TemplateListView = () => import('@/views/templates/TemplateListView.vue')
 const TemplateDetailView = () => import('@/views/templates/TemplateDetailView.vue')
 
+const NormalizationRuleListView = () => import('@/views/rules/NormalizationRuleListView.vue')
+const NormalizationRuleDetailView = () => import('@/views/rules/NormalizationRuleDetailView.vue')
+
 const routes = [
   // --- home: buscador de proveedores (GET /api/v1/catalogs/suppliers/) ---
   {
@@ -142,6 +145,23 @@ const routes = [
     component: LayoutDetailView,
     props: true,
     meta: { title: 'Detalle de layout' },
+  },
+
+  // --- normalization rules (independientes, reutilizables entre templates) ---
+  {
+    // GET/POST /api/v1/normalization-rules/
+    path: '/reglas',
+    name: 'normalization-rule-list',
+    component: NormalizationRuleListView,
+    meta: { title: 'Reglas de normalización' },
+  },
+  {
+    // GET/PUT/PATCH/DELETE /api/v1/normalization-rules/{id}/
+    path: '/reglas/:ruleId',
+    name: 'normalization-rule-detail',
+    component: NormalizationRuleDetailView,
+    props: true,
+    meta: { title: 'Detalle de regla' },
   },
 
   // --- fallback ---
