@@ -4,6 +4,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import templateService from '../../services/templates'
 import layoutService from '../../services/layouts'
 import catalogService from '../../services/catalogs'
+import XmlXPathPicker from '../../components/XmlXPathPicker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,6 +46,8 @@ const availableMappingCatalogs = computed(() => {
   return catalogs.value.filter((catalog) => !mappedCatalogIds.has(Number(catalog.id)))
 })
 
+const isXmlTemplate = computed(() => template.value?.document_type === 'xml')
+
 function emptyFieldForm() {
   return {
     layout_field: '',
@@ -76,9 +79,9 @@ function fieldPayload() {
   const data = {
     layout_field: Number(fieldForm.value.layout_field),
     source_field: fieldForm.value.source_field.trim(),
-    extraction_type: fieldForm.value.extraction_type.trim(),
-    worksheet: fieldForm.value.worksheet.trim(),
-    header_occurrence: Number(fieldForm.value.header_occurrence),
+    extraction_type: isXmlTemplate.value ? 'xpath' : 'header_name',
+    worksheet: isXmlTemplate.value ? '' : fieldForm.value.worksheet.trim(),
+    header_occurrence: isXmlTemplate.value ? 1 : Number(fieldForm.value.header_occurrence),
   }
   return data
 }
@@ -434,37 +437,27 @@ async function handleDelete() {
           </div>
 
           <div class="field">
-            <label class="field__label" for="source_field">Campo origen</label>
+            <label class="field__label" for="source_field">
+              {{ isXmlTemplate ? 'XPath del XML' : 'Campo origen' }}
+            </label>
             <input
               id="source_field"
               v-model="fieldForm.source_field"
               class="field__input field__input--mono"
               type="text"
-              placeholder="Nombre de columna en el archivo"
+              :placeholder="isXmlTemplate ? 'Selecciona un nodo del XML abajo' : 'Nombre de columna en el archivo'"
               required
             />
           </div>
 
-          <div class="field-grid">
-            <div class="field">
-              <label class="field__label" for="extraction_type">Tipo de extracción</label>
-              <select
-                id="extraction_type"
-                v-model="fieldForm.extraction_type"
-                class="field__input"
-                required
-              >
-                <option value="header_name">Nombre de encabezado</option>
-                <option value="xpath">XPath</option>
-              </select>
-            </div>
+          <div v-if="!isXmlTemplate" class="field-grid">
             <div class="field">
               <label class="field__label" for="worksheet">Hoja</label>
               <input id="worksheet" v-model="fieldForm.worksheet" class="field__input" type="text" />
             </div>
           </div>
 
-          <div class="field">
+          <div v-if="!isXmlTemplate" class="field">
             <label class="field__label" for="header_occurrence">Ocurrencia del encabezado</label>
             <input
               id="header_occurrence"
@@ -474,6 +467,11 @@ async function handleDelete() {
               min="0"
             />
           </div>
+
+          <XmlXPathPicker
+            v-if="isXmlTemplate"
+            @select="fieldForm.source_field = $event"
+          />
 
           <div class="confirm-row">
             <button class="btn btn--secondary" type="submit" :disabled="isSavingField">
@@ -789,6 +787,7 @@ async function handleDelete() {
 .field-row {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-gray-200);
@@ -805,9 +804,25 @@ async function handleDelete() {
 }
 
 .field-row__name { font-size: var(--text-sm); color: var(--color-gray-900); }
-.field-row__source { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--color-navy-700); }
-.field-row__meta { font-size: var(--text-xs); color: var(--color-gray-500); }
-.field-row__actions { display: flex; gap: var(--space-1); }
+
+.field-row__source {
+  flex-basis: 100%;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-navy-700);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.field-row__meta {
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-gray-500);
+  overflow-wrap: anywhere;
+}
+
+.field-row__actions { display: flex; flex-shrink: 0; gap: var(--space-1); }
 
 .icon-btn {
   width: 28px;
