@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import templateService from '../../services/templates'
 import layoutService from '../../services/layouts'
+import catalogService from '../../services/catalogs'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,6 +14,8 @@ const template = ref(null)
 const layouts = ref([])
 const layoutFields = ref([])
 const templateFields = ref([])
+const catalogs = ref([])
+const pivotMappings = ref([])
 const form = ref({ name: '', layout: '', document_type: 'xlsx', is_active: true })
 
 const isLoading = ref(true)
@@ -27,15 +30,26 @@ const fieldForm = ref(emptyFieldForm())
 const isSavingField = ref(false)
 const fieldError = ref(null)
 
+const showMappingForm = ref(false)
+const editingMapping = ref(null)
+const mappingForm = ref({ catalog_id: '', pivot_template_field: '' })
+const isSavingMapping = ref(false)
+const mappingError = ref(null)
+
 const isDeleting = ref(false)
 const deleteError = ref(null)
 const showDeleteConfirm = ref(false)
+
+const availableMappingCatalogs = computed(() => {
+  const mappedCatalogIds = new Set(pivotMappings.value.map((mapping) => Number(mapping.catalog_id)))
+  return catalogs.value.filter((catalog) => !mappedCatalogIds.has(Number(catalog.id)))
+})
 
 function emptyFieldForm() {
   return {
     layout_field: '',
     source_field: '',
-    extraction_type: 'header',
+    extraction_type: 'header_name',
     worksheet: '',
     header_occurrence: '',
   }
@@ -64,13 +78,14 @@ function fieldPayload() {
     source_field: fieldForm.value.source_field.trim(),
     extraction_type: fieldForm.value.extraction_type.trim(),
     worksheet: fieldForm.value.worksheet.trim(),
+    header_occurrence: Number(fieldForm.value.header_occurrence),
   }
-
-  if (fieldForm.value.header_occurrence !== '') {
-    data.header_occurrence = Number(fieldForm.value.header_occurrence)
-  }
-
   return data
+}
+
+function templateFieldName(fieldId) {
+  const field = templateFields.value.find((item) => Number(item.id) === Number(fieldId))
+  return field ? field.layout_field_name || field.source_field : `Campo #${fieldId}`
 }
 
 async function loadFields() {
@@ -79,15 +94,30 @@ async function loadFields() {
   )
 }
 
+async function loadPivotMappings(catalogList = catalogs.value) {
+  const mappingsByCatalog = await Promise.all(
+    catalogList.map(async (catalog) => {
+      const mappings = await fetchAll((params) =>
+        catalogService.getCatalogPivotMappings(supplierId, catalog.id, params),
+      )
+      return mappings
+        .filter((mapping) => Number(mapping.template) === Number(templateId))
+        .map((mapping) => ({ ...mapping, catalog_id: catalog.id, catalog_name: catalog.name }))
+    }),
+  )
+  pivotMappings.value = mappingsByCatalog.flat()
+}
+
 async function loadTemplate() {
   isLoading.value = true
   loadError.value = null
 
   try {
-    const [data, layoutsData, fieldsData] = await Promise.all([
+    const [data, layoutsData, fieldsData, catalogsData] = await Promise.all([
       templateService.getTemplate(supplierId, templateId),
       fetchAll((params) => layoutService.getLayouts(params)),
       fetchAll((params) => templateService.getTemplateFields(supplierId, templateId, params)),
+      fetchAll((params) => catalogService.getCatalogs(supplierId, params)),
     ])
     const layout = await layoutService.getLayout(data.layout)
 
@@ -95,12 +125,14 @@ async function loadTemplate() {
     layouts.value = layoutsData
     layoutFields.value = layout.layout_fields || []
     templateFields.value = fieldsData
+    catalogs.value = catalogsData
     form.value = {
       name: data.name,
       layout: data.layout,
       document_type: data.document_type,
       is_active: data.is_active,
     }
+    await loadPivotMappings(catalogsData)
   } catch (err) {
     loadError.value = err.message || 'No se pudo cargar el template.'
   } finally {
@@ -139,9 +171,9 @@ function openEditField(field) {
   fieldForm.value = {
     layout_field: field.layout_field,
     source_field: field.source_field || '',
-    extraction_type: field.extraction_type || 'header',
+    extraction_type: field.extraction_type || 'header_name',
     worksheet: field.worksheet || '',
-    header_occurrence: field.header_occurrence ?? '',
+    header_occurrence: field.header_occurrence ?? 1,
   }
   showFieldForm.value = true
 }
@@ -150,6 +182,31 @@ function closeFieldForm() {
   showFieldForm.value = false
   editingFieldId.value = null
   fieldForm.value = emptyFieldForm()
+}
+
+function openCreateMapping(fieldId = '') {
+  if (availableMappingCatalogs.value.length === 0) return
+
+  mappingError.value = null
+  editingMapping.value = null
+  mappingForm.value = { catalog_id: '', pivot_template_field: fieldId }
+  showMappingForm.value = true
+}
+
+function openEditMapping(mapping) {
+  mappingError.value = null
+  editingMapping.value = mapping
+  mappingForm.value = {
+    catalog_id: mapping.catalog_id,
+    pivot_template_field: mapping.pivot_template_field,
+  }
+  showMappingForm.value = true
+}
+
+function closeMappingForm() {
+  showMappingForm.value = false
+  editingMapping.value = null
+  mappingForm.value = { catalog_id: '', pivot_template_field: '' }
 }
 
 async function handleSaveField() {
@@ -165,7 +222,15 @@ async function handleSaveField() {
         fieldPayload(),
       )
     } else {
-      await templateService.createTemplateField(supplierId, templateId, fieldPayload())
+      const createdField = await templateService.createTemplateField(
+        supplierId,
+        templateId,
+        fieldPayload(),
+      )
+      await loadFields()
+      closeFieldForm()
+      openCreateMapping(createdField.id)
+      return
     }
     await loadFields()
     closeFieldForm()
@@ -176,12 +241,56 @@ async function handleSaveField() {
   }
 }
 
+async function handleSaveMapping() {
+  isSavingMapping.value = true
+  mappingError.value = null
+
+  const data = {
+    template: Number(templateId),
+    pivot_template_field: Number(mappingForm.value.pivot_template_field),
+  }
+
+  try {
+    if (editingMapping.value) {
+      await catalogService.updateCatalogPivotMapping(
+        supplierId,
+        editingMapping.value.catalog_id,
+        editingMapping.value.id,
+        data,
+      )
+    } else {
+      await catalogService.createCatalogPivotMapping(
+        supplierId,
+        Number(mappingForm.value.catalog_id),
+        data,
+      )
+    }
+    await loadPivotMappings()
+    closeMappingForm()
+  } catch (err) {
+    mappingError.value = err
+  } finally {
+    isSavingMapping.value = false
+  }
+}
+
+async function handleDeleteMapping(mapping) {
+  mappingError.value = null
+
+  try {
+    await catalogService.deleteCatalogPivotMapping(supplierId, mapping.catalog_id, mapping.id)
+    await loadPivotMappings()
+  } catch (err) {
+    mappingError.value = err
+  }
+}
+
 async function handleDeleteField(fieldId) {
   fieldError.value = null
 
   try {
     await templateService.deleteTemplateField(supplierId, templateId, fieldId)
-    await loadFields()
+    await Promise.all([loadFields(), loadPivotMappings()])
   } catch (err) {
     fieldError.value = err
   }
@@ -292,7 +401,9 @@ async function handleDelete() {
               <span class="field-row__meta">
                 {{ field.extraction_type }}
                 <template v-if="field.worksheet"> · {{ field.worksheet }}</template>
-                <template v-if="field.header_occurrence"> · #{{ field.header_occurrence }}</template>
+                <template v-if="field.header_occurrence !== null && field.header_occurrence !== undefined">
+                  · #{{ field.header_occurrence }}
+                </template>
               </span>
             </div>
             <span class="field-row__actions">
@@ -337,14 +448,15 @@ async function handleDelete() {
           <div class="field-grid">
             <div class="field">
               <label class="field__label" for="extraction_type">Tipo de extracción</label>
-              <input
+              <select
                 id="extraction_type"
                 v-model="fieldForm.extraction_type"
-                class="field__input field__input--mono"
-                type="text"
-                placeholder="header"
+                class="field__input"
                 required
-              />
+              >
+                <option value="header_name">Nombre de encabezado</option>
+                <option value="xpath">XPath</option>
+              </select>
             </div>
             <div class="field">
               <label class="field__label" for="worksheet">Hoja</label>
@@ -359,7 +471,7 @@ async function handleDelete() {
               v-model="fieldForm.header_occurrence"
               class="field__input"
               type="number"
-              min="1"
+              min="0"
             />
           </div>
 
@@ -368,6 +480,111 @@ async function handleDelete() {
               {{ isSavingField ? 'Guardando…' : editingFieldId ? 'Guardar campo' : '+ Agregar campo' }}
             </button>
             <button class="btn btn--plain" type="button" @click="closeFieldForm">Cancelar</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="section">
+        <div class="section__header">
+          <div>
+            <h2 class="section__title">Relaciones con catálogos</h2>
+            <p class="section__hint">
+              Define qué campo de este template se usa para buscar coincidencias en cada catálogo.
+            </p>
+          </div>
+          <button
+            v-if="!showMappingForm"
+            class="btn btn--secondary"
+            type="button"
+            :disabled="availableMappingCatalogs.length === 0 || templateFields.length === 0"
+            @click="openCreateMapping()"
+          >
+            + Relacionar catálogo
+          </button>
+        </div>
+
+        <p v-if="mappingError" class="state state--error">
+          {{ mappingError.message }}
+          <span v-if="mappingError.type === 'field_errors'">
+            — {{ Object.values(mappingError.context).flat().join(' ') }}
+          </span>
+        </p>
+
+        <p v-if="catalogs.length === 0" class="state">
+          Este proveedor todavía no tiene catálogos disponibles.
+        </p>
+        <p v-else-if="pivotMappings.length === 0 && !showMappingForm" class="state">
+          Este template todavía no tiene relaciones con catálogos.
+        </p>
+
+        <ul v-else-if="pivotMappings.length" class="field-list">
+          <li v-for="mapping in pivotMappings" :key="mapping.id" class="field-row">
+            <div class="field-row__content">
+              <span class="field-row__name">{{ mapping.catalog_name }}</span>
+              <span class="field-row__source">← {{ templateFieldName(mapping.pivot_template_field) }}</span>
+            </div>
+            <span class="field-row__actions">
+              <button
+                class="icon-btn"
+                type="button"
+                title="Editar relación"
+                @click="openEditMapping(mapping)"
+              >
+                ✎
+              </button>
+              <button
+                class="icon-btn icon-btn--danger"
+                type="button"
+                title="Eliminar relación"
+                @click="handleDeleteMapping(mapping)"
+              >
+                ✕
+              </button>
+            </span>
+          </li>
+        </ul>
+
+        <form v-if="showMappingForm" class="field-form" @submit.prevent="handleSaveMapping">
+          <div class="field">
+            <label class="field__label" for="mapping_catalog">Catálogo</label>
+            <select
+              id="mapping_catalog"
+              v-model="mappingForm.catalog_id"
+              class="field__input"
+              :disabled="Boolean(editingMapping)"
+              required
+            >
+              <option disabled value="">Selecciona un catálogo</option>
+              <option
+                v-for="catalog in editingMapping ? catalogs : availableMappingCatalogs"
+                :key="catalog.id"
+                :value="catalog.id"
+              >
+                {{ catalog.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="pivot_template_field">Campo para hacer match</label>
+            <select
+              id="pivot_template_field"
+              v-model="mappingForm.pivot_template_field"
+              class="field__input"
+              required
+            >
+              <option disabled value="">Selecciona un campo del template</option>
+              <option v-for="field in templateFields" :key="field.id" :value="field.id">
+                {{ field.layout_field_name }} ← {{ field.source_field }}
+              </option>
+            </select>
+          </div>
+
+          <div class="confirm-row">
+            <button class="btn btn--secondary" type="submit" :disabled="isSavingMapping">
+              {{ isSavingMapping ? 'Guardando…' : editingMapping ? 'Guardar relación' : 'Crear relación' }}
+            </button>
+            <button class="btn btn--plain" type="button" @click="closeMappingForm">Cancelar</button>
           </div>
         </form>
       </section>

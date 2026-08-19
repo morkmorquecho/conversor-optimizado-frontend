@@ -57,6 +57,34 @@ const catalogService = {
     return api.delete(`/suppliers/${supplierId}/catalogs/${catalogId}/`)
   },
 
+  // ── PIVOT MAPPINGS (catálogo <-> campo de template) ──
+  getCatalogPivotMappings(supplierId, catalogId, params = {}) {
+    return api.get(`/suppliers/${supplierId}/catalogs/${catalogId}/pivot-mappings/`, { params })
+  },
+
+  createCatalogPivotMapping(supplierId, catalogId, data) {
+    // data: { template, pivot_template_field }
+    return api.post(`/suppliers/${supplierId}/catalogs/${catalogId}/pivot-mappings/`, data)
+  },
+
+  updateCatalogPivotMapping(supplierId, catalogId, mappingId, data) {
+    return api.put(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/pivot-mappings/${mappingId}/`,
+      data,
+    )
+  },
+
+  patchCatalogPivotMapping(supplierId, catalogId, mappingId, data) {
+    return api.patch(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/pivot-mappings/${mappingId}/`,
+      data,
+    )
+  },
+
+  deleteCatalogPivotMapping(supplierId, catalogId, mappingId) {
+    return api.delete(`/suppliers/${supplierId}/catalogs/${catalogId}/pivot-mappings/${mappingId}/`)
+  },
+
   // ── CATALOG ROWS ──
   getCatalogRows(supplierId, catalogId, params = {}) {
     return api.get(`/suppliers/${supplierId}/catalogs/${catalogId}/rows/`, { params })
