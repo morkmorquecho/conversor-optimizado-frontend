@@ -4,6 +4,7 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import templateService from '../../services/templates'
 import layoutService from '../../services/layouts'
 import catalogService from '../../services/catalogs'
+import normalization from '../../services/normalization'
 import XmlXPathPicker from '../../components/XmlXPathPicker.vue'
 
 const route = useRoute()
@@ -17,6 +18,7 @@ const layoutFields = ref([])
 const templateFields = ref([])
 const catalogs = ref([])
 const pivotMappings = ref([])
+const normalizationRules = ref([])
 const form = ref({ name: '', layout: '', document_type: 'xlsx', is_active: true })
 
 const isLoading = ref(true)
@@ -37,6 +39,13 @@ const mappingForm = ref({ catalog_id: '', pivot_template_field: '' })
 const isSavingMapping = ref(false)
 const mappingError = ref(null)
 
+const showRuleForm = ref(false)
+const editingFieldRule = ref(null)
+const fieldRuleForm = ref({ template_field: '', normalization_rule: '', sort_order: 1 })
+const isSavingFieldRule = ref(false)
+const fieldRuleError = ref(null)
+const isReorderingFieldRule = ref(false)
+
 const isDeleting = ref(false)
 const deleteError = ref(null)
 const showDeleteConfirm = ref(false)
@@ -47,6 +56,17 @@ const availableMappingCatalogs = computed(() => {
 })
 
 const isXmlTemplate = computed(() => template.value?.document_type === 'xml')
+
+const availableNormalizationRules = computed(() => {
+  const field = templateFields.value.find(
+    (item) => Number(item.id) === Number(fieldRuleForm.value.template_field),
+  )
+  const linkedRuleIds = new Set((field?.rules || []).map((rule) => Number(rule.normalization_rule)))
+  const currentRuleId = Number(fieldRuleForm.value.normalization_rule)
+  return normalizationRules.value.filter(
+    (rule) => !linkedRuleIds.has(Number(rule.id)) || Number(rule.id) === currentRuleId,
+  )
+})
 
 function emptyFieldForm() {
   return {
@@ -91,6 +111,16 @@ function templateFieldName(fieldId) {
   return field ? field.layout_field_name || field.source_field : `Campo #${fieldId}`
 }
 
+function nextRuleSortOrder(fieldId) {
+  const field = templateFields.value.find((item) => Number(item.id) === Number(fieldId))
+  return (field?.rules || []).length + 1
+}
+
+function hasAvailableRules(field) {
+  const linkedRuleIds = new Set((field.rules || []).map((rule) => Number(rule.normalization_rule)))
+  return normalizationRules.value.some((rule) => !linkedRuleIds.has(Number(rule.id)))
+}
+
 async function loadFields() {
   templateFields.value = await fetchAll((params) =>
     templateService.getTemplateFields(supplierId, templateId, params),
@@ -116,11 +146,12 @@ async function loadTemplate() {
   loadError.value = null
 
   try {
-    const [data, layoutsData, fieldsData, catalogsData] = await Promise.all([
+    const [data, layoutsData, fieldsData, catalogsData, rulesData] = await Promise.all([
       templateService.getTemplate(supplierId, templateId),
       fetchAll((params) => layoutService.getLayouts(params)),
       fetchAll((params) => templateService.getTemplateFields(supplierId, templateId, params)),
       fetchAll((params) => catalogService.getCatalogs(supplierId, params)),
+      fetchAll((params) => normalization.getRules(params)),
     ])
     const layout = await layoutService.getLayout(data.layout)
 
@@ -129,6 +160,7 @@ async function loadTemplate() {
     layoutFields.value = layout.layout_fields || []
     templateFields.value = fieldsData
     catalogs.value = catalogsData
+    normalizationRules.value = rulesData
     form.value = {
       name: data.name,
       layout: data.layout,
@@ -212,6 +244,39 @@ function closeMappingForm() {
   mappingForm.value = { catalog_id: '', pivot_template_field: '' }
 }
 
+function openCreateFieldRule(fieldId = '') {
+  fieldRuleError.value = null
+  editingFieldRule.value = null
+  fieldRuleForm.value = {
+    template_field: fieldId,
+    normalization_rule: '',
+    sort_order: fieldId ? nextRuleSortOrder(fieldId) : 1,
+  }
+  showRuleForm.value = true
+}
+
+function openEditFieldRule(field, rule) {
+  fieldRuleError.value = null
+  editingFieldRule.value = { fieldId: field.id, ruleId: rule.id }
+  fieldRuleForm.value = {
+    template_field: field.id,
+    normalization_rule: rule.normalization_rule,
+    sort_order: rule.sort_order,
+  }
+  showRuleForm.value = true
+}
+
+function closeFieldRuleForm() {
+  showRuleForm.value = false
+  editingFieldRule.value = null
+  fieldRuleForm.value = { template_field: '', normalization_rule: '', sort_order: 1 }
+}
+
+function handleRuleFieldChange() {
+  fieldRuleForm.value.normalization_rule = ''
+  fieldRuleForm.value.sort_order = nextRuleSortOrder(fieldRuleForm.value.template_field)
+}
+
 async function handleSaveField() {
   isSavingField.value = true
   fieldError.value = null
@@ -274,6 +339,76 @@ async function handleSaveMapping() {
     mappingError.value = err
   } finally {
     isSavingMapping.value = false
+  }
+}
+
+async function handleSaveFieldRule() {
+  isSavingFieldRule.value = true
+  fieldRuleError.value = null
+
+  const data = {
+    normalization_rule: Number(fieldRuleForm.value.normalization_rule),
+    sort_order: Number(fieldRuleForm.value.sort_order),
+  }
+
+  try {
+    if (editingFieldRule.value) {
+      await templateService.updateTemplateFieldRule(
+        supplierId,
+        templateId,
+        editingFieldRule.value.fieldId,
+        editingFieldRule.value.ruleId,
+        data,
+      )
+    } else {
+      await templateService.createTemplateFieldRule(
+        supplierId,
+        templateId,
+        Number(fieldRuleForm.value.template_field),
+        data,
+      )
+    }
+    await loadFields()
+    closeFieldRuleForm()
+  } catch (err) {
+    fieldRuleError.value = err
+  } finally {
+    isSavingFieldRule.value = false
+  }
+}
+
+async function handleDeleteFieldRule(fieldId, ruleId) {
+  fieldRuleError.value = null
+
+  try {
+    await templateService.deleteTemplateFieldRule(supplierId, templateId, fieldId, ruleId)
+    await loadFields()
+  } catch (err) {
+    fieldRuleError.value = err
+  }
+}
+
+async function moveFieldRule(field, index, direction) {
+  const rules = [...(field.rules || [])]
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= rules.length) return
+
+  ;[rules[index], rules[targetIndex]] = [rules[targetIndex], rules[index]]
+  isReorderingFieldRule.value = true
+  fieldRuleError.value = null
+
+  try {
+    await templateService.reorderTemplateFieldRules(
+      supplierId,
+      templateId,
+      field.id,
+      rules.map((rule) => rule.id),
+    )
+    await loadFields()
+  } catch (err) {
+    fieldRuleError.value = err
+  } finally {
+    isReorderingFieldRule.value = false
   }
 }
 
@@ -478,6 +613,138 @@ async function handleDelete() {
               {{ isSavingField ? 'Guardando…' : editingFieldId ? 'Guardar campo' : '+ Agregar campo' }}
             </button>
             <button class="btn btn--plain" type="button" @click="closeFieldForm">Cancelar</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="section">
+        <div class="section__header">
+          <div>
+            <h2 class="section__title">Reglas de normalización</h2>
+            <p class="section__hint">
+              Opcionalmente, aplica reglas a los campos antes de usar su valor.
+            </p>
+          </div>
+          <button
+            v-if="!showRuleForm"
+            class="btn btn--secondary"
+            type="button"
+            :disabled="templateFields.length === 0 || !templateFields.some(hasAvailableRules)"
+            @click="openCreateFieldRule()"
+          >
+            + Agregar regla
+          </button>
+        </div>
+
+        <p v-if="fieldRuleError" class="state state--error">
+          {{ fieldRuleError.message }}
+          <span v-if="fieldRuleError.type === 'field_errors'">
+            — {{ Object.values(fieldRuleError.context).flat().join(' ') }}
+          </span>
+        </p>
+
+        <p v-if="templateFields.length === 0" class="state">
+          Primero agrega un campo mapeado para poder relacionar una regla.
+        </p>
+        <p v-else-if="normalizationRules.length === 0" class="state">
+          No hay reglas de normalización disponibles.
+        </p>
+
+        <div v-for="field in templateFields" :key="field.id" class="rule-group">
+          <h3 class="rule-group__title">{{ field.layout_field_name }}</h3>
+          <p v-if="!(field.rules || []).length" class="rule-group__empty">Sin reglas asignadas.</p>
+          <ol v-else class="field-list">
+            <li v-for="(rule, index) in field.rules" :key="rule.id" class="field-row">
+              <span class="field-row__order">{{ rule.sort_order }}</span>
+              <span class="field-row__name">{{ rule.normalization_rule_name }}</span>
+              <span class="field-row__actions">
+                <button
+                  class="icon-btn"
+                  type="button"
+                  title="Subir"
+                  :disabled="index === 0 || isReorderingFieldRule"
+                  @click="moveFieldRule(field, index, -1)"
+                >
+                  ↑
+                </button>
+                <button
+                  class="icon-btn"
+                  type="button"
+                  title="Bajar"
+                  :disabled="index === field.rules.length - 1 || isReorderingFieldRule"
+                  @click="moveFieldRule(field, index, 1)"
+                >
+                  ↓
+                </button>
+                <button class="icon-btn" type="button" title="Editar" @click="openEditFieldRule(field, rule)">
+                  ✎
+                </button>
+                <button
+                  class="icon-btn icon-btn--danger"
+                  type="button"
+                  title="Quitar regla"
+                  @click="handleDeleteFieldRule(field.id, rule.id)"
+                >
+                  ✕
+                </button>
+              </span>
+            </li>
+          </ol>
+          <button
+            v-if="!showRuleForm && hasAvailableRules(field)"
+            class="btn btn--plain btn--small"
+            type="button"
+            @click="openCreateFieldRule(field.id)"
+          >
+            + Agregar regla a este campo
+          </button>
+        </div>
+
+        <form v-if="showRuleForm" class="field-form" @submit.prevent="handleSaveFieldRule">
+          <div class="field">
+            <label class="field__label" for="rule_template_field">Campo mapeado</label>
+            <select
+              id="rule_template_field"
+              v-model="fieldRuleForm.template_field"
+              class="field__input"
+              :disabled="Boolean(editingFieldRule)"
+              required
+              @change="handleRuleFieldChange"
+            >
+              <option disabled value="">Selecciona un campo</option>
+              <option v-for="field in templateFields" :key="field.id" :value="field.id">
+                {{ field.layout_field_name }} ← {{ field.source_field }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="normalization_rule">Regla</label>
+            <select id="normalization_rule" v-model="fieldRuleForm.normalization_rule" class="field__input" required>
+              <option disabled value="">Selecciona una regla</option>
+              <option v-for="rule in availableNormalizationRules" :key="rule.id" :value="rule.id">
+                {{ rule.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="rule_sort_order">Orden de ejecución</label>
+            <input
+              id="rule_sort_order"
+              v-model="fieldRuleForm.sort_order"
+              class="field__input"
+              type="number"
+              min="1"
+              required
+            />
+          </div>
+
+          <div class="confirm-row">
+            <button class="btn btn--secondary" type="submit" :disabled="isSavingFieldRule">
+              {{ isSavingFieldRule ? 'Guardando…' : editingFieldRule ? 'Guardar regla' : '+ Agregar regla' }}
+            </button>
+            <button class="btn btn--plain" type="button" @click="closeFieldRuleForm">Cancelar</button>
           </div>
         </form>
       </section>
@@ -764,6 +1031,7 @@ async function handleDelete() {
 .btn--danger { color: var(--color-white); background: var(--color-danger); }
 .btn--danger:hover:not(:disabled) { opacity: 0.9; }
 .btn--plain { color: var(--color-gray-500); background: transparent; }
+.btn--small { padding-left: 0; padding-right: 0; font-size: var(--text-xs); }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .confirm-row {
@@ -805,6 +1073,14 @@ async function handleDelete() {
 
 .field-row__name { font-size: var(--text-sm); color: var(--color-gray-900); }
 
+.field-row__order {
+  width: 1.5em;
+  color: var(--color-gray-500);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: right;
+}
+
 .field-row__source {
   flex-basis: 100%;
   min-width: 0;
@@ -840,6 +1116,26 @@ async function handleDelete() {
 
 .icon-btn:hover { background: var(--color-navy-50); color: var(--color-navy-700); }
 .icon-btn--danger:hover { background: var(--color-danger-bg); color: var(--color-danger); }
+
+.rule-group {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+}
+
+.rule-group__title {
+  margin: 0 0 var(--space-2);
+  color: var(--color-gray-900);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.rule-group__empty {
+  margin: 0 0 var(--space-2);
+  color: var(--color-gray-500);
+  font-size: var(--text-sm);
+}
 
 @media (max-width: 560px) {
   .section__header { flex-direction: column; }

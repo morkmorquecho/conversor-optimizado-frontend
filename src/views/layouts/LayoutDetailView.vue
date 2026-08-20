@@ -18,14 +18,22 @@ const saveError = ref(null)
 const saveSuccess = ref(false)
 
 const newFieldName = ref('')
+const newFieldSystemKey = ref('')
 const isAddingField = ref(false)
 const fieldError = ref(null)
 
 const isReordering = ref(false)
+const savingSystemKeyId = ref(null)
 
 const isDeleting = ref(false)
 const deleteError = ref(null)
 const showDeleteConfirm = ref(false)
+
+// Debe coincidir con LayoutField.SystemFieldKey en el backend.
+const SYSTEM_FIELD_OPTIONS = [
+  { value: '', label: 'Normal (mapeado desde template/catálogo)' },
+  { value: 'supplier_code', label: 'Código del proveedor' },
+]
 
 async function loadLayout() {
   isLoading.value = true
@@ -68,8 +76,10 @@ async function handleAddField() {
     await layoutService.createLayoutField(layoutId, {
       name: newFieldName.value.trim(),
       sort_order: nextOrder,
+      system_field_key: newFieldSystemKey.value,
     })
     newFieldName.value = ''
+    newFieldSystemKey.value = ''
     await loadLayout()
   } catch (err) {
     fieldError.value = err
@@ -85,6 +95,22 @@ async function handleDeleteField(fieldId) {
     await loadLayout()
   } catch (err) {
     fieldError.value = err
+  }
+}
+
+async function handleSystemKeyChange(field) {
+  savingSystemKeyId.value = field.id
+  fieldError.value = null
+  try {
+    await layoutService.patchLayoutField(layoutId, field.id, {
+      system_field_key: field.system_field_key,
+    })
+    await loadLayout()
+  } catch (err) {
+    fieldError.value = err
+    await loadLayout() // revertir el select al valor real si falló
+  } finally {
+    savingSystemKeyId.value = null
   }
 }
 
@@ -175,8 +201,8 @@ async function handleDeleteLayout() {
       <section class="section">
         <h2 class="section__title">Campos</h2>
         <p class="section__hint">
-          Orden en que se arma la fila de salida. Los templates mapean sus columnas a estos
-          campos.
+          Orden en que se arma la fila de salida. Los campos "Normal" se mapean desde un
+          template o catálogo; los de sistema se calculan automáticamente.
         </p>
 
         <p v-if="fieldError" class="state state--error">
@@ -194,6 +220,23 @@ async function handleDeleteLayout() {
           <li v-for="(field, index) in layout.layout_fields" :key="field.id" class="field-row">
             <span class="field-row__order">{{ field.sort_order }}</span>
             <span class="field-row__name">{{ field.name }}</span>
+
+            <select
+              class="field-row__system-select"
+              :value="field.system_field_key"
+              :disabled="savingSystemKeyId === field.id"
+              @change="
+                (e) => {
+                  field.system_field_key = e.target.value
+                  handleSystemKeyChange(field)
+                }
+              "
+            >
+              <option v-for="opt in SYSTEM_FIELD_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+
             <span class="field-row__actions">
               <button
                 class="icon-btn"
@@ -233,6 +276,11 @@ async function handleDeleteLayout() {
             placeholder="Nombre del campo, ej. invoice_date"
             required
           />
+          <select v-model="newFieldSystemKey" class="field__input add-field-form__select">
+            <option v-for="opt in SYSTEM_FIELD_OPTIONS" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
           <button class="btn btn--secondary" type="submit" :disabled="isAddingField">
             {{ isAddingField ? 'Agregando…' : '+ Agregar campo' }}
           </button>
@@ -277,7 +325,7 @@ async function handleDeleteLayout() {
 
 <style scoped>
 .detail {
-  max-width: 560px;
+  max-width: 640px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-4) var(--space-12);
 }
@@ -487,17 +535,32 @@ async function handleDeleteLayout() {
   color: var(--color-gray-500);
   width: 1.5em;
   text-align: right;
+  flex-shrink: 0;
 }
 
 .field-row__name {
   flex: 1;
   font-size: var(--text-sm);
   color: var(--color-gray-900);
+  min-width: 0;
+}
+
+.field-row__system-select {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--color-gray-900);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-sm);
+  background: var(--color-white);
+  max-width: 220px;
+  flex-shrink: 0;
 }
 
 .field-row__actions {
   display: flex;
   gap: var(--space-1);
+  flex-shrink: 0;
 }
 
 .icon-btn {
@@ -536,5 +599,10 @@ async function handleDeleteLayout() {
 
 .add-field-form .field__input {
   flex: 1;
+}
+
+.add-field-form__select {
+  flex: 1;
+  max-width: 260px;
 }
 </style>

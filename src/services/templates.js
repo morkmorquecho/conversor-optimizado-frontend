@@ -67,6 +67,20 @@ const templateService = {
     )
   },
 
+  updateTemplateFieldRule(supplierId, templateId, fieldId, ruleId, data) {
+    return api.put(
+      `/suppliers/${supplierId}/templates/${templateId}/fields/${fieldId}/rules/${ruleId}/`,
+      data,
+    )
+  },
+
+  patchTemplateFieldRule(supplierId, templateId, fieldId, ruleId, data) {
+    return api.patch(
+      `/suppliers/${supplierId}/templates/${templateId}/fields/${fieldId}/rules/${ruleId}/`,
+      data,
+    )
+  },
+
   deleteTemplateFieldRule(supplierId, templateId, fieldId, ruleId) {
     return api.delete(
       `/suppliers/${supplierId}/templates/${templateId}/fields/${fieldId}/rules/${ruleId}/`,
