@@ -14,6 +14,7 @@ const catalogs = ref([])
 const selectedCatalogId = ref('')
 const file = ref(null)
 const fileInputRef = ref(null)
+const fileError = ref(null)
 
 const isLoadingContext = ref(true)
 const loadError = ref(null)
@@ -22,19 +23,16 @@ const isProcessing = ref(false)
 const processError = ref(null)
 const lastDownloadedFilename = ref(null)
 
-// Trae todas las páginas de un endpoint paginado (PageNumberPagination de DRF).
 async function fetchAll(fetcher) {
   let page = 1
   let all = []
   let hasNext = true
-
   while (hasNext) {
     const { results, next } = await fetcher({ page })
     all = all.concat(results)
     hasNext = Boolean(next)
     page += 1
   }
-
   return all
 }
 
@@ -46,13 +44,8 @@ async function loadContext() {
       fetchAll((params) => catalogService.getSupplierTemplates(supplierId, params)),
       fetchAll((params) => catalogService.getSupplierCatalogsSummary(supplierId, params)),
     ])
-
     template.value = templates.find((t) => String(t.id) === String(templateId)) || null
     catalogs.value = supplierCatalogs.filter((c) => c.is_active)
-
-    if (catalogs.value.length === 1) {
-      selectedCatalogId.value = catalogs.value[0].id
-    }
   } catch (err) {
     loadError.value = err.message || 'No se pudo cargar la información necesaria.'
   } finally {
@@ -62,15 +55,56 @@ async function loadContext() {
 
 onMounted(loadContext)
 
+const isXml = computed(() => template.value?.document_type === 'xml')
+
+const expectedFile = computed(() => {
+  if (isXml.value) {
+    return {
+      label: 'XML (.xml)',
+      accept: '.xml,application/xml,text/xml',
+      extensions: ['xml'],
+    }
+  }
+  return {
+    label: 'Excel (.xlsx o .xls)',
+    accept: '.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel',
+    extensions: ['xlsx', 'xls'],
+  }
+})
+
+function isExpectedFile(selectedFile) {
+  const extension = selectedFile?.name?.split('.').pop()?.toLowerCase()
+  return expectedFile.value.extensions.includes(extension)
+}
+
 function handleFileChange(event) {
-  file.value = event.target.files[0] || null
+  const selectedFile = event.target.files[0] || null
+  fileError.value = null
+
+  if (!selectedFile) {
+    file.value = null
+    return
+  }
+
+  if (!isExpectedFile(selectedFile)) {
+    file.value = null
+    fileInputRef.value.value = ''
+    fileError.value = `El template requiere un archivo ${expectedFile.value.label}.`
+    return
+  }
+
+  file.value = selectedFile
 }
 
 const canSubmit = computed(
-  () => Boolean(file.value) && Boolean(selectedCatalogId.value) && !isProcessing.value,
+  () => Boolean(file.value) && isExpectedFile(file.value) && !isProcessing.value,
 )
 
 async function handleSubmit() {
+  if (!file.value || !isExpectedFile(file.value)) {
+    fileError.value = `Selecciona un archivo ${expectedFile.value.label}.`
+    return
+  }
   if (!canSubmit.value) return
 
   isProcessing.value = true
@@ -78,11 +112,11 @@ async function handleSubmit() {
   lastDownloadedFilename.value = null
 
   try {
-    const response = await extractionService.processInvoiceXlsx(
-      file.value,
-      templateId,
-      selectedCatalogId.value,
-    )
+    const catalogId = selectedCatalogId.value || null
+
+    const response = isXml.value
+      ? await extractionService.processInvoiceXml(file.value, templateId, catalogId)
+      : await extractionService.processInvoiceXlsx(file.value, templateId, catalogId)
 
     const filename = filenameFromContentDisposition(
       response.headers['content-disposition'],
@@ -127,29 +161,38 @@ async function handleSubmit() {
 
       <form class="form" @submit.prevent="handleSubmit">
         <div class="field">
-          <label class="field__label" for="catalog">Catálogo</label>
-          <select id="catalog" v-model="selectedCatalogId" class="field__select" required>
-            <option value="" disabled>Selecciona un catálogo</option>
+          <label class="field__label" for="catalog">Catálogo (opcional)</label>
+          <select id="catalog" v-model="selectedCatalogId" class="field__select">
+            <option value="">Sin catálogo</option>
             <option v-for="catalog in catalogs" :key="catalog.id" :value="catalog.id">
               {{ catalog.name }}
             </option>
           </select>
-          <p v-if="catalogs.length === 0" class="field__hint field__hint--error">
-            Este proveedor no tiene catálogos activos disponibles.
+          <p v-if="catalogs.length === 0" class="field__hint field__hint--info">
+            Este proveedor no tiene catálogos activos. Puedes procesar sin catálogo.
+          </p>
+          <p v-else class="field__hint">
+            Selecciona un catálogo o deja "Sin catálogo" para procesar sin él.
           </p>
         </div>
 
         <div class="field">
-          <label class="field__label" for="file">Archivo de factura (Excel)</label>
+          <label class="field__label" for="file">
+            Archivo de factura ({{ expectedFile.label }})
+          </label>
           <input
             id="file"
             ref="fileInputRef"
             class="field__file"
             type="file"
-            accept=".xlsx,.xls"
+            :accept="expectedFile.accept"
             required
             @change="handleFileChange"
           />
+          <p class="field__hint">
+            Este template solo admite archivos {{ expectedFile.label }}.
+          </p>
+          <p v-if="fileError" class="field__hint field__hint--error">{{ fileError }}</p>
         </div>
 
         <p v-if="processError" class="state state--error">{{ processError }}</p>
