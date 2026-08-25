@@ -55,7 +55,9 @@ async function loadContext() {
 
 onMounted(loadContext)
 
-const isXml = computed(() => template.value?.document_type === 'xml')
+const documentType = computed(() => template.value?.document_type)
+const isXml = computed(() => documentType.value === 'xml')
+const isPdf = computed(() => documentType.value === 'pdf')
 
 const expectedFile = computed(() => {
   if (isXml.value) {
@@ -63,6 +65,13 @@ const expectedFile = computed(() => {
       label: 'XML (.xml)',
       accept: '.xml,application/xml,text/xml',
       extensions: ['xml'],
+    }
+  }
+  if (isPdf.value) {
+    return {
+      label: 'PDF (.pdf)',
+      accept: '.pdf,application/pdf',
+      extensions: ['pdf'],
     }
   }
   return {
@@ -114,9 +123,11 @@ async function handleSubmit() {
   try {
     const catalogId = selectedCatalogId.value || null
 
-    const response = isXml.value
-      ? await extractionService.processInvoiceXml(file.value, templateId, catalogId)
-      : await extractionService.processInvoiceXlsx(file.value, templateId, catalogId)
+    const response = isPdf.value
+      ? await extractionService.processInvoicePdf(file.value, templateId, catalogId)
+      : isXml.value
+        ? await extractionService.processInvoiceXml(file.value, templateId, catalogId)
+        : await extractionService.processInvoiceXlsx(file.value, templateId, catalogId)
 
     const filename = filenameFromContentDisposition(
       response.headers['content-disposition'],
@@ -191,6 +202,10 @@ async function handleSubmit() {
           />
           <p class="field__hint">
             Este template solo admite archivos {{ expectedFile.label }}.
+          </p>
+          <p v-if="isPdf" class="field__hint field__hint--info">
+            La extracción de cada PDF se realiza una sola vez mediante LLM. El PDF debe tener texto
+            seleccionable; los documentos que requieren OCR no son compatibles.
           </p>
           <p v-if="fileError" class="field__hint field__hint--error">{{ fileError }}</p>
         </div>

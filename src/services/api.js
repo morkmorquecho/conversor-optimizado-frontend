@@ -46,6 +46,12 @@ function isFormattedApiError(response) {
   return response?.data?.success === false
 }
 
+function createDetailError(data) {
+  const message = data?.detail || data?.message
+  if (!message) return null
+  return new Error(typeof message === 'string' ? message : 'Error inesperado')
+}
+
 // ── INTERCEPTOR ──────────────────────────────────────────────────────────────
 api.interceptors.response.use(
   (response) => {
@@ -78,9 +84,9 @@ api.interceptors.response.use(
       try {
         const text = await response.data.text()
         const parsed = JSON.parse(text)
-        if (parsed?.success === false) {
-          return Promise.reject(createApiError(parsed))
-        }
+        if (parsed?.success === false) return Promise.reject(createApiError(parsed))
+        const detailError = createDetailError(parsed)
+        if (detailError) return Promise.reject(detailError)
       } catch {
         // el blob no era JSON parseable; cae al manejo genérico de abajo
       }
@@ -89,6 +95,9 @@ api.interceptors.response.use(
     if (isFormattedApiError(response)) {
       return Promise.reject(createApiError(response.data))
     }
+
+    const detailError = createDetailError(response?.data)
+    if (detailError) return Promise.reject(detailError)
 
     // Error de red, timeout, CORS, etc. (sin response del servidor)
     return Promise.reject(error)

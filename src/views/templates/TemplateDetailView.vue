@@ -19,7 +19,10 @@ const templateFields = ref([])
 const catalogs = ref([])
 const pivotMappings = ref([])
 const normalizationRules = ref([])
-const form = ref({ name: '', layout: '', document_type: 'xlsx', is_active: true })
+const form = ref({
+  layout: '', document_type: 'xlsx', is_active: true,
+  pdf_extraction_mode: '', line_pattern_hint: '',
+})
 
 const isLoading = ref(true)
 const loadError = ref(null)
@@ -55,7 +58,8 @@ const availableMappingCatalogs = computed(() => {
   return catalogs.value.filter((catalog) => !mappedCatalogIds.has(Number(catalog.id)))
 })
 
-const isXmlTemplate = computed(() => template.value?.document_type === 'xml')
+const isXmlTemplate = computed(() => form.value.document_type === 'xml')
+const isPdfTemplate = computed(() => form.value.document_type === 'pdf')
 
 const availableNormalizationRules = computed(() => {
   const field = templateFields.value.find(
@@ -75,6 +79,12 @@ function emptyFieldForm() {
     extraction_type: 'header_name',
     worksheet: '',
     header_occurrence: '',
+    scope: 'header',
+    anchor_text: '',
+    anchor_position: '',
+    block_start_anchor: '',
+    block_end_anchor: '',
+    expected_data_type: '',
   }
 }
 
@@ -96,6 +106,23 @@ async function fetchAll(fetcher) {
 }
 
 function fieldPayload() {
+  if (isPdfTemplate.value) {
+    return {
+      layout_field: Number(fieldForm.value.layout_field),
+      source_field: '',
+      extraction_type: 'llm_text',
+      worksheet: '',
+      header_occurrence: 1,
+      scope: fieldForm.value.scope,
+      anchor_text: fieldForm.value.scope === 'header' ? fieldForm.value.anchor_text.trim() : '',
+      anchor_position: fieldForm.value.scope === 'header' ? fieldForm.value.anchor_position : '',
+      block_start_anchor: fieldForm.value.scope === 'line_item'
+        ? fieldForm.value.block_start_anchor.trim() : '',
+      block_end_anchor: fieldForm.value.scope === 'line_item'
+        ? fieldForm.value.block_end_anchor.trim() : '',
+      expected_data_type: fieldForm.value.expected_data_type,
+    }
+  }
   const data = {
     layout_field: Number(fieldForm.value.layout_field),
     source_field: fieldForm.value.source_field.trim(),
@@ -162,10 +189,11 @@ async function loadTemplate() {
     catalogs.value = catalogsData
     normalizationRules.value = rulesData
     form.value = {
-      name: data.name,
       layout: data.layout,
       document_type: data.document_type,
       is_active: data.is_active,
+      pdf_extraction_mode: data.pdf_extraction_mode || '',
+      line_pattern_hint: data.line_pattern_hint || '',
     }
     await loadPivotMappings(catalogsData)
   } catch (err) {
@@ -183,7 +211,13 @@ async function handleSave() {
   saveSuccess.value = false
 
   try {
-    await templateService.patchTemplate(supplierId, templateId, form.value)
+    const payload = { ...form.value }
+    delete payload.name
+    if (payload.document_type !== 'pdf') {
+      delete payload.pdf_extraction_mode
+      delete payload.line_pattern_hint
+    }
+    await templateService.patchTemplate(supplierId, templateId, payload)
     await loadTemplate()
     saveSuccess.value = true
   } catch (err) {
@@ -209,6 +243,12 @@ function openEditField(field) {
     extraction_type: field.extraction_type || 'header_name',
     worksheet: field.worksheet || '',
     header_occurrence: field.header_occurrence ?? 1,
+    scope: field.scope || 'header',
+    anchor_text: field.anchor_text || '',
+    anchor_position: field.anchor_position || '',
+    block_start_anchor: field.block_start_anchor || '',
+    block_end_anchor: field.block_end_anchor || '',
+    expected_data_type: field.expected_data_type || '',
   }
   showFieldForm.value = true
 }
@@ -282,6 +322,13 @@ async function handleSaveField() {
   fieldError.value = null
 
   try {
+    // if (
+    //   isPdfTemplate.value
+    //   && fieldForm.value.scope === 'line_item'
+    //   && form.value.pdf_extraction_mode !== 'text_and_tables'
+    // ) {
+    //   throw new Error('Los campos de partidas requieren el modo “Texto y tablas” en el template PDF.')
+    // }
     if (editingFieldId.value) {
       await templateService.patchTemplateField(
         supplierId,
@@ -467,11 +514,6 @@ async function handleDelete() {
 
         <form class="form" @submit.prevent="handleSave">
           <div class="field">
-            <label class="field__label" for="name">Nombre</label>
-            <input id="name" v-model="form.name" class="field__input" type="text" required />
-          </div>
-
-          <div class="field">
             <label class="field__label" for="layout">Layout destino</label>
             <select id="layout" v-model="form.layout" class="field__input" required>
               <option v-for="layout in layouts" :key="layout.id" :value="layout.id">
@@ -485,8 +527,32 @@ async function handleDelete() {
             <select id="document_type" v-model="form.document_type" class="field__input">
               <option value="xlsx">XLSX</option>
               <option value="xml">XML</option>
+              <option value="pdf">PDF (LLM)</option>
             </select>
           </div>
+
+          <template v-if="form.document_type === 'pdf'">
+            <div class="field">
+              <label class="field__label" for="pdf_extraction_mode">Contenido a extraer</label>
+              <select id="pdf_extraction_mode" v-model="form.pdf_extraction_mode" class="field__input" required>
+                <option disabled value="">Selecciona un modo</option>
+                <option value="text_only">Solo texto</option>
+                <option value="text_and_tables">Texto y tablas</option>
+              </select>
+              <p class="field__hint">Las partidas requieren “Texto y tablas”.</p>
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="line_pattern_hint">Pista para renglones (opcional)</label>
+              <textarea
+                id="line_pattern_hint"
+                v-model="form.line_pattern_hint"
+                class="field__input"
+                rows="3"
+                placeholder="Ej. Cantidad, precio y descripción, en ese orden."
+              />
+            </div>
+          </template>
 
           <label class="checkbox-field">
             <input v-model="form.is_active" type="checkbox" />
@@ -535,7 +601,11 @@ async function handleDelete() {
           <li v-for="field in templateFields" :key="field.id" class="field-row">
             <div class="field-row__content">
               <span class="field-row__name">{{ field.layout_field_name }}</span>
-              <span class="field-row__source">← {{ field.source_field }}</span>
+              <span class="field-row__source">
+                ← {{ field.extraction_type === 'llm_text'
+                  ? (field.scope === 'line_item' ? `Partidas hasta: ${field.block_end_anchor}` : `Ancla: ${field.anchor_text}`)
+                  : field.source_field }}
+              </span>
               <span class="field-row__meta">
                 {{ field.extraction_type }}
                 <template v-if="field.worksheet"> · {{ field.worksheet }}</template>
@@ -571,7 +641,7 @@ async function handleDelete() {
             </select>
           </div>
 
-          <div class="field">
+          <div v-if="!isPdfTemplate" class="field">
             <label class="field__label" for="source_field">
               {{ isXmlTemplate ? 'XPath del XML' : 'Campo origen' }}
             </label>
@@ -585,14 +655,66 @@ async function handleDelete() {
             />
           </div>
 
-          <div v-if="!isXmlTemplate" class="field-grid">
+          <template v-if="isPdfTemplate">
+            <div class="field">
+              <label class="field__label" for="field_scope">Tipo de dato en el PDF</label>
+              <select id="field_scope" v-model="fieldForm.scope" class="field__input">
+                <option value="header">Encabezado (un valor por documento)</option>
+                <option value="line_item">Partida (un valor por renglón)</option>
+              </select>
+            </div>
+
+            <template v-if="fieldForm.scope === 'header'">
+              <div class="field">
+                <label class="field__label" for="anchor_text">Texto ancla</label>
+                <input id="anchor_text" v-model="fieldForm.anchor_text" class="field__input" type="text" required />
+              </div>
+              <div class="field">
+                <label class="field__label" for="anchor_position">Ubicación del valor</label>
+                <select id="anchor_position" v-model="fieldForm.anchor_position" class="field__input" required>
+                  <option disabled value="">Selecciona una posición</option>
+                  <option value="after">Después del ancla</option>
+                  <option value="before">Antes del ancla</option>
+                  <option value="below">Debajo del ancla</option>
+                </select>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="field">
+                <label class="field__label" for="block_start_anchor">Inicio de partidas (opcional)</label>
+                <input id="block_start_anchor" v-model="fieldForm.block_start_anchor" class="field__input" type="text" />
+              </div>
+              <div class="field">
+                <label class="field__label" for="block_end_anchor">Fin de partidas (opcional)</label>
+                <input id="block_end_anchor" v-model="fieldForm.block_end_anchor" class="field__input" type="text" />
+                <p class="field__hint">Si lo dejas vacío, el sistema usa cortes genéricos como “Subtotal”, “Total” o “IVA”.</p>
+              </div>
+            </template>
+
+            <div class="field">
+              <label class="field__label" for="expected_data_type">Tipo esperado (opcional)</label>
+              <select id="expected_data_type" v-model="fieldForm.expected_data_type" class="field__input">
+                <option value="">Sin especificar</option>
+                <option value="text">Texto</option>
+                <option value="date">Fecha</option>
+                <option value="amount">Monto</option>
+                <option value="number">Número</option>
+              </select>
+            </div>
+            <p class="field__hint field__hint--info">
+              Este campo se solicitará al LLM junto con los demás campos del PDF: se realiza una sola extracción por archivo.
+            </p>
+          </template>
+
+          <div v-if="!isXmlTemplate && !isPdfTemplate" class="field-grid">
             <div class="field">
               <label class="field__label" for="worksheet">Hoja</label>
               <input id="worksheet" v-model="fieldForm.worksheet" class="field__input" type="text" />
             </div>
           </div>
 
-          <div v-if="!isXmlTemplate" class="field">
+          <div v-if="!isXmlTemplate && !isPdfTemplate" class="field">
             <label class="field__label" for="header_occurrence">Ocurrencia del encabezado</label>
             <input
               id="header_occurrence"

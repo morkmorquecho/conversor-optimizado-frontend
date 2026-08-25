@@ -12,7 +12,7 @@ const templateService = {
     return api.get(`/suppliers/${supplierId}/templates/${templateId}/`)
   },
 
-  // data: { layout, name, document_type, is_active }
+  // PDF: incluye pdf_extraction_mode y, opcionalmente, line_pattern_hint.
   createTemplate(supplierId, data) {
     return api.post(`/suppliers/${supplierId}/templates/`, data)
   },
@@ -34,7 +34,7 @@ const templateService = {
     return api.get(`/suppliers/${supplierId}/templates/${templateId}/fields/`, { params })
   },
 
-  // data: { layout_field, source_field, extraction_type, worksheet, header_occurrence }
+  // PDF: usa extraction_type=llm_text y la configuración de scope/anclas.
   createTemplateField(supplierId, templateId, data) {
     return api.post(`/suppliers/${supplierId}/templates/${templateId}/fields/`, data)
   },

@@ -1,5 +1,5 @@
     <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import templateService from '../../services/templates'
 import layoutService from '../../services/layouts'
@@ -18,7 +18,14 @@ const loadError = ref(null)
 const showCreateForm = ref(route.query.crear === '1')
 const isCreating = ref(false)
 const createError = ref(null)
-const newTemplate = ref({ name: '', layout: '', document_type: 'xlsx' })
+const newTemplate = ref({
+  layout: '',
+  document_type: 'xlsx',
+  pdf_extraction_mode: '',
+  line_pattern_hint: '',
+})
+
+const isPdfTemplate = computed(() => newTemplate.value.document_type === 'pdf')
 
 // Trae todas las páginas de un endpoint paginado (PageNumberPagination de DRF).
 async function fetchAll(fetcher) {
@@ -63,8 +70,15 @@ async function handleCreate() {
   isCreating.value = true
   createError.value = null
   try {
-    await templateService.createTemplate(supplierId, newTemplate.value)
-    newTemplate.value = { name: '', layout: '', document_type: 'xlsx' }
+    const payload = { ...newTemplate.value }
+    if (!isPdfTemplate.value) {
+      delete payload.pdf_extraction_mode
+      delete payload.line_pattern_hint
+    }
+    await templateService.createTemplate(supplierId, payload)
+    newTemplate.value = {
+      layout: '', document_type: 'xlsx', pdf_extraction_mode: '', line_pattern_hint: '',
+    }
     showCreateForm.value = false
     await loadData()
   } catch (err) {
@@ -90,18 +104,6 @@ async function handleCreate() {
 
     <form v-if="showCreateForm" class="create-form" @submit.prevent="handleCreate">
       <div class="field">
-        <label class="field__label" for="name">Nombre</label>
-        <input
-          id="name"
-          v-model="newTemplate.name"
-          class="field__input"
-          type="text"
-          placeholder="Factura estándar"
-          required
-        />
-      </div>
-
-      <div class="field">
         <label class="field__label" for="layout">Layout destino</label>
         <select id="layout" v-model="newTemplate.layout" class="field__input" required>
           <option value="" disabled>Selecciona un layout</option>
@@ -120,8 +122,36 @@ async function handleCreate() {
         <select id="document_type" v-model="newTemplate.document_type" class="field__input">
           <option value="xlsx">XLSX</option>
           <option value="xml">XML</option>
+          <option value="pdf">PDF (LLM)</option>
         </select>
       </div>
+
+      <p class="field__hint">
+        El nombre del template se asigna automáticamente al crearlo.
+      </p>
+
+      <template v-if="isPdfTemplate">
+        <div class="field">
+          <label class="field__label" for="pdf_extraction_mode">Contenido a extraer</label>
+          <select id="pdf_extraction_mode" v-model="newTemplate.pdf_extraction_mode" class="field__input" required>
+            <option disabled value="">Selecciona un modo</option>
+            <option value="text_only">Solo texto</option>
+            <option value="text_and_tables">Texto y tablas</option>
+          </select>
+          <p class="field__hint">Los campos PDF se extraen exclusivamente mediante LLM.</p>
+        </div>
+
+        <div class="field">
+          <label class="field__label" for="line_pattern_hint">Pista para renglones (opcional)</label>
+          <textarea
+            id="line_pattern_hint"
+            v-model="newTemplate.line_pattern_hint"
+            class="field__input"
+            rows="3"
+            placeholder="Ej. Cantidad, precio y descripción, en ese orden."
+          />
+        </div>
+      </template>
 
       <p v-if="createError" class="state state--error">
         {{ createError.message }}
