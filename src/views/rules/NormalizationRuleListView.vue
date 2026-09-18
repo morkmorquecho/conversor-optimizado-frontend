@@ -18,6 +18,7 @@ const RULE_TYPES = [
   { value: 'trim', label: 'Trim (quitar espacios)' },
   { value: 'uppercase', label: 'Uppercase' },
   { value: 'date_format', label: 'Date format' },
+  { value: 'spanish_date', label: 'Fecha en español' },
   { value: 'value_map', label: 'Value map' },
   { value: 'regex_replace', label: 'Regex replace' },
 ]

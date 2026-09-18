@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import catalogService from '../../services/catalogs'
+import layoutService from '@/services/layouts'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,6 +11,16 @@ const catalogId = route.params.catalogId
 
 const catalog = ref(null)
 const form = ref({ name: '', pivot_field_name: '', is_active: true })
+
+// ── nuevo: mapeo a layouts ──
+const layouts = ref([])
+const columnLayoutFields = ref([])
+
+const showMappingForm = ref(false)
+const editingMapping = ref(null)
+const mappingForm = ref({ layout: '', column: '', layout_field: '' })
+const isSavingMapping = ref(false)
+const mappingError = ref(null)
 
 const isLoading = ref(true)
 const loadError = ref(null)
@@ -22,24 +33,91 @@ const isDeleting = ref(false)
 const deleteError = ref(null)
 const showDeleteConfirm = ref(false)
 
+async function fetchAll(fetcher) {
+  let page = 1
+  let all = []
+  let hasNext = true
+  while (hasNext) {
+    const { results, next } = await fetcher({ page })
+    all = all.concat(results)
+    hasNext = Boolean(next)
+    page += 1
+  }
+  return all
+}
+
+async function loadColumnLayoutFields() {
+  columnLayoutFields.value = await fetchAll((params) =>
+    catalogService.getColumnLayoutFields(supplierId, catalogId, params),
+  )
+}
+
+// Agrupa los mapeos existentes por layout, para mostrarlos como en
+// "Reglas de normalización" de TemplateDetail.
+const mappingsByLayout = computed(() => {
+  const groups = new Map()
+  for (const mapping of columnLayoutFields.value) {
+    if (!groups.has(mapping.layout_id)) {
+      const layout = layouts.value.find((l) => l.id === mapping.layout_id)
+      groups.set(mapping.layout_id, {
+        layout_id: mapping.layout_id,
+        layout_code: layout ? layout.code : mapping.layout_code,
+        mappings: [],
+      })
+    }
+    groups.get(mapping.layout_id).mappings.push(mapping)
+  }
+  return Array.from(groups.values())
+})
+
+// LayoutFields del layout elegido en el form (para no importar todos los
+// layouts de una, se piden on-demand al cambiar el select).
+const selectedLayoutFields = ref([])
+
+async function handleMappingLayoutChange() {
+  mappingForm.value.column = ''
+  mappingForm.value.layout_field = ''
+  selectedLayoutFields.value = []
+  if (!mappingForm.value.layout) return
+  const layout = await layoutService.getLayout(mappingForm.value.layout)
+  selectedLayoutFields.value = layout.layout_fields || []
+}
+
+// Columnas del catálogo que todavía no tienen mapeo para el layout elegido
+// (salvo la que se está editando, que debe seguir apareciendo).
+const availableColumnsForMapping = computed(() => {
+  if (!catalog.value) return []
+  const mappedColumnIds = new Set(
+    columnLayoutFields.value
+      .filter((m) => m.layout_id === Number(mappingForm.value.layout))
+      .filter((m) => !editingMapping.value || m.id !== editingMapping.value.id)
+      .map((m) => m.column),
+  )
+  return catalog.value.columns.filter((c) => !mappedColumnIds.has(c.id))
+})
+
 async function loadCatalog() {
   isLoading.value = true
   loadError.value = null
   try {
-    const data = await catalogService.getCatalog(supplierId, catalogId)
+    const [data, layoutsData] = await Promise.all([
+      catalogService.getCatalog(supplierId, catalogId),
+      fetchAll((params) => layoutService.getLayouts(params)),
+    ])
     catalog.value = data
+    layouts.value = layoutsData
     form.value = {
       name: data.name,
       pivot_field_name: data.pivot_field_name,
       is_active: data.is_active,
     }
+    await loadColumnLayoutFields()
   } catch (err) {
     loadError.value = err.message || 'No se pudo cargar el catálogo.'
   } finally {
     isLoading.value = false
   }
 }
-
 onMounted(loadCatalog)
 
 async function handleSave() {
@@ -66,6 +144,82 @@ async function handleDelete() {
   } catch (err) {
     deleteError.value = err.message || 'No se pudo eliminar el catálogo.'
     isDeleting.value = false
+  }
+}
+
+
+function openCreateMapping() {
+  mappingError.value = null
+  editingMapping.value = null
+  mappingForm.value = { layout: '', column: '', layout_field: '' }
+  selectedLayoutFields.value = []
+  showMappingForm.value = true
+}
+
+async function openEditMapping(mapping) {
+  mappingError.value = null
+  editingMapping.value = mapping
+  mappingForm.value = {
+    layout: mapping.layout_id,
+    column: mapping.column,
+    layout_field: mapping.layout_field,
+  }
+  showMappingForm.value = true
+  const layout = await layoutService.getLayout(mapping.layout_id)
+  selectedLayoutFields.value = layout.layout_fields || []
+}
+
+function closeMappingForm() {
+  showMappingForm.value = false
+  editingMapping.value = null
+  mappingForm.value = { layout: '', column: '', layout_field: '' }
+  selectedLayoutFields.value = []
+}
+
+async function handleSaveMapping() {
+  isSavingMapping.value = true
+  mappingError.value = null
+
+  const columnId = Number(mappingForm.value.column)
+  const layoutFieldId = Number(mappingForm.value.layout_field)
+
+  if (!mappingForm.value.column || Number.isNaN(columnId)) {
+    mappingError.value = { message: 'Selecciona una columna del catálogo.' }
+    isSavingMapping.value = false
+    return
+  }
+  if (!mappingForm.value.layout_field || Number.isNaN(layoutFieldId)) {
+    mappingError.value = { message: 'Selecciona un campo del layout.' }
+    isSavingMapping.value = false
+    return
+  }
+
+  const data = { column: columnId, layout_field: layoutFieldId }
+  console.log('mappingForm al submit:', JSON.stringify(mappingForm.value))
+  try {
+    if (editingMapping.value) {
+      await catalogService.updateColumnLayoutField(
+        supplierId, catalogId, editingMapping.value.id, data,
+      )
+    } else {
+      await catalogService.createColumnLayoutField(supplierId, catalogId, data)
+    }
+    await loadColumnLayoutFields()
+    closeMappingForm()
+  } catch (err) {
+    mappingError.value = err
+  } finally {
+    isSavingMapping.value = false
+  }
+}
+
+async function handleDeleteMapping(mapping) {
+  mappingError.value = null
+  try {
+    await catalogService.deleteColumnLayoutField(supplierId, catalogId, mapping.id)
+    await loadColumnLayoutFields()
+  } catch (err) {
+    mappingError.value = err
   }
 }
 </script>
@@ -174,6 +328,125 @@ async function handleDelete() {
             Cancelar
           </button>
         </div>
+      </section>
+
+      
+      
+      <!-- ── MAPEO A LAYOUTS ── -->
+      <section class="section">
+        <div class="section__header">
+          <div>
+            <h2 class="section__title">Mapeo a layouts</h2>
+            <p class="section__hint">
+              Define a qué campo del layout corresponde cada columna de este catálogo.
+              Se usa cuando un template pivotea este catálogo para resolver esos campos
+              sin extraerlos del documento.
+            </p>
+          </div>
+          <button
+            v-if="!showMappingForm"
+            class="btn btn--secondary"
+            type="button"
+            :disabled="catalog.columns.length === 0 || layouts.length === 0"
+            @click="openCreateMapping"
+          >
+            + Agregar mapeo
+          </button>
+        </div>
+
+        <p v-if="mappingError" class="state state--error">
+          {{ mappingError.message }}
+          <span v-if="mappingError.type === 'field_errors'">
+            — {{ Object.values(mappingError.context).flat().join(' ') }}
+          </span>
+        </p>
+
+        <p v-if="mappingsByLayout.length === 0 && !showMappingForm" class="state">
+          Este catálogo todavía no tiene mapeos a ningún layout.
+        </p>
+
+        <div v-for="group in mappingsByLayout" :key="group.layout_id" class="rule-group">
+          <h3 class="rule-group__title">{{ group.layout_code }}</h3>
+          <ul class="field-list">
+            <li v-for="mapping in group.mappings" :key="mapping.id" class="field-row">
+              <div class="field-row__content">
+                <span class="field-row__name">{{ mapping.layout_field_name }}</span>
+                <span class="field-row__source">← columna "{{ mapping.column_source_name }}"</span>
+              </div>
+              <span class="field-row__actions">
+                <button class="icon-btn" type="button" title="Editar" @click="openEditMapping(mapping)">
+                  ✎
+                </button>
+                <button
+                  class="icon-btn icon-btn--danger"
+                  type="button"
+                  title="Quitar mapeo"
+                  @click="handleDeleteMapping(mapping)"
+                >
+                  ✕
+                </button>
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <form v-if="showMappingForm" class="field-form" @submit.prevent="handleSaveMapping">
+          <div class="field">
+            <label class="field__label" for="mapping_layout">Layout</label>
+            <select
+              id="mapping_layout"
+              v-model="mappingForm.layout"
+              class="field__input"
+              :disabled="Boolean(editingMapping)"
+              required
+              @change="handleMappingLayoutChange"
+            >
+              <option disabled value="">Selecciona un layout</option>
+              <option v-for="layout in layouts" :key="layout.id" :value="layout.id">
+                {{ layout.name }} ({{ layout.code }})
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="mapping_column">Columna del catálogo</label>
+            <select
+              id="mapping_column"
+              v-model="mappingForm.column"
+              class="field__input"
+              :disabled="!mappingForm.layout"
+              required
+            >
+              <option disabled value="">Selecciona una columna</option>
+              <option v-for="col in availableColumnsForMapping" :key="col.id" :value="col.id">
+                {{ col.source_name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="mapping_layout_field">Campo destino</label>
+            <select
+              id="mapping_layout_field"
+              v-model="mappingForm.layout_field"
+              class="field__input"
+              :disabled="!mappingForm.layout"
+              required
+            >
+              <option disabled value="">Selecciona un campo del layout</option>
+              <option v-for="lf in selectedLayoutFields" :key="lf.id" :value="lf.id">
+                {{ lf.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="confirm-row">
+            <button class="btn btn--secondary" type="submit" :disabled="isSavingMapping">
+              {{ isSavingMapping ? 'Guardando…' : editingMapping ? 'Guardar mapeo' : '+ Agregar mapeo' }}
+            </button>
+            <button class="btn btn--plain" type="button" @click="closeMappingForm">Cancelar</button>
+          </div>
+        </form>
       </section>
     </template>
   </main>

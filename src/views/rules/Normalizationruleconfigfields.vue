@@ -51,6 +51,10 @@ function buildConfig() {
     return { input_format: inputFormat.value, output_format: outputFormat.value }
   }
 
+  if (props.ruleType === 'spanish_date') {
+    return { output_format: outputFormat.value }
+  }
+
   if (props.ruleType === 'value_map') {
     const map = {}
     for (const row of mapRows.value) {
@@ -114,6 +118,22 @@ watch(
       <p class="config-fields__hint">
         Códigos estándar de <code>strptime/strftime</code>: %Y año, %m mes, %d día.
       </p>
+    </template>
+
+    <template v-else-if="ruleType === 'spanish_date'">
+      <p class="config-fields__hint">
+        Reconoce fechas como "22 de julio de 2026" automáticamente.
+      </p>
+      <div class="field">
+        <label class="field__label">Formato de salida</label>
+        <input
+          v-model="outputFormat"
+          class="field__input field__input--mono"
+          type="text"
+          placeholder="%d/%m/%Y"
+          required
+        />
+      </div>
     </template>
 
     <template v-else-if="ruleType === 'value_map'">

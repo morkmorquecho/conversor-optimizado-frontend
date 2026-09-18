@@ -120,6 +120,37 @@ const catalogService = {
     )
   },
 
+
+  getLayouts(params) {
+  return api.get('/layouts/', { params })
+  },
+  getLayout(layoutId) {
+    return api.get(`/layouts/${layoutId}/`)
+  },
+  getColumnLayoutFields(supplierId, catalogId, params) {
+    return api.get(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/column-layout-fields/`,
+      { params },
+    )
+  },
+  createColumnLayoutField(supplierId, catalogId, data) {
+    return api.post(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/column-layout-fields/`,
+      data,
+    )
+  },
+  updateColumnLayoutField(supplierId, catalogId, id, data) {
+    return api.patch(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/column-layout-fields/${id}/`,
+      data,
+    )
+  },
+  deleteColumnLayoutField(supplierId, catalogId, id) {
+    return api.delete(
+      `/suppliers/${supplierId}/catalogs/${catalogId}/column-layout-fields/${id}/`,
+    )
+  },
+
 }
 
 export default catalogService

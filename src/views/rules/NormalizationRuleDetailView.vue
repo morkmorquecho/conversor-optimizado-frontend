@@ -25,6 +25,7 @@ const RULE_TYPES = [
   { value: 'trim', label: 'Trim (quitar espacios)' },
   { value: 'uppercase', label: 'Uppercase' },
   { value: 'date_format', label: 'Date format' },
+  { value: 'spanish_date', label: 'Fecha en español' },
   { value: 'value_map', label: 'Value map' },
   { value: 'regex_replace', label: 'Regex replace' },
 ]
@@ -32,7 +33,7 @@ const RULE_TYPES = [
 const configState = ref({
   pattern: '',
   replacement: '',
-  input_format: '',
+  inputFormats: [''], 
   output_format: '',
   mapEntries: [{ key: '', value: '' }],
   caseInsensitive: true,
@@ -49,13 +50,25 @@ function removeMapEntry(index) {
   configState.value.mapEntries.splice(index, 1)
 }
 
+function addDateFormat() {
+  configState.value.inputFormats.push('')
+}
+
+function removeDateFormat(index) {
+  configState.value.inputFormats.splice(index, 1)
+}
+
 // Arma el objeto `config` real que espera el backend, según el rule_type.
 function buildConfig(ruleType, state) {
   if (ruleType === 'regex_replace') {
     return { pattern: state.pattern, replacement: state.replacement }
   }
   if (ruleType === 'date_format') {
-    return { input_format: state.input_format, output_format: state.output_format }
+    const input_formats = state.inputFormats.map(f => f.trim()).filter(Boolean)
+    return { input_formats, output_format: state.output_format }
+  }
+  if (ruleType === 'spanish_date') {
+    return { output_format: state.output_format }
   }
   if (ruleType === 'value_map') {
     const map = {}
@@ -77,7 +90,10 @@ function loadConfigIntoState(ruleType, config) {
     configState.value.pattern = config.pattern || ''
     configState.value.replacement = config.replacement || ''
   } else if (ruleType === 'date_format') {
-    configState.value.input_format = config.input_format || ''
+    const formats = config.input_formats || (config.input_format ? [config.input_format] : [])
+    configState.value.inputFormats = formats.length ? formats : ['']
+    configState.value.output_format = config.output_format || ''
+  } else if (ruleType === 'spanish_date') {
     configState.value.output_format = config.output_format || ''
   } else if (ruleType === 'value_map') {
     const entries = Object.entries(config.map || {}).map(([key, value]) => ({ key, value }))
@@ -214,16 +230,32 @@ async function handleDelete() {
 
           <template v-else-if="form.rule_type === 'date_format'">
             <div class="field">
-              <label class="field__label" for="input_format">Formato de entrada</label>
-              <input
-                id="input_format"
-                v-model="configState.input_format"
-                class="field__input field__input--mono"
-                type="text"
-                placeholder="%Y%m%d"
-                required
-              />
+              <label class="field__label">Formatos de entrada posibles</label>
+              <p class="field__hint">
+                Se intentan en orden hasta que uno funcione. Códigos de <code>strptime</code>.
+              </p>
+              <div class="map-row" v-for="(fmt, index) in configState.inputFormats" :key="index">
+                <input
+                  v-model="configState.inputFormats[index]"
+                  class="field__input field__input--mono"
+                  type="text"
+                  placeholder="%Y%m%d"
+                />
+                <button
+                  v-if="configState.inputFormats.length > 1"
+                  class="map-row__remove"
+                  type="button"
+                  title="Quitar"
+                  @click="removeDateFormat(index)"
+                >
+                  ✕
+                </button>
+              </div>
+              <button class="btn btn--secondary" type="button" @click="addDateFormat">
+                + Agregar formato
+              </button>
             </div>
+
             <div class="field">
               <label class="field__label" for="output_format">Formato de salida</label>
               <input
@@ -235,6 +267,24 @@ async function handleDelete() {
                 required
               />
               <p class="field__hint">Códigos de <code>strptime/strftime</code> de Python.</p>
+            </div>
+          </template>
+
+          <template v-else-if="form.rule_type === 'spanish_date'">
+            <p class="field__hint">
+              Reconoce fechas escritas como "22 de julio de 2026" automáticamente.
+              No necesita formato de entrada.
+            </p>
+            <div class="field">
+              <label class="field__label" for="spanish_output_format">Formato de salida</label>
+              <input
+                id="spanish_output_format"
+                v-model="configState.output_format"
+                class="field__input field__input--mono"
+                type="text"
+                placeholder="%d/%m/%Y"
+                required
+              />
             </div>
           </template>
 
