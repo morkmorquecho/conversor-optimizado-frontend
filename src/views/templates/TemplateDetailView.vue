@@ -19,6 +19,9 @@ const templateFields = ref([])
 const catalogs = ref([])
 const pivotMappings = ref([])
 const normalizationRules = ref([])
+const staticCatalogOptions = ref([])
+const staticCatalogRecords = ref([])
+const isLoadingCatalogRecords = ref(false)
 const form = ref({
   layout: '', document_type: 'xlsx', is_active: true,
   pdf_extraction_mode: '', line_pattern_hint: '',
@@ -75,6 +78,7 @@ const availableNormalizationRules = computed(() => {
 function emptyFieldForm() {
   return {
     layout_field: '',
+    is_static: false,
     source_field: '',
     extraction_type: 'header_name',
     worksheet: '',
@@ -85,6 +89,10 @@ function emptyFieldForm() {
     block_start_anchor: '',
     block_end_anchor: '',
     expected_data_type: '',
+    value_source: 'fixed',
+    fixed_value: '',
+    catalog_model: '',
+    catalog_object_id: '',
   }
 }
 
@@ -106,6 +114,19 @@ async function fetchAll(fetcher) {
 }
 
 function fieldPayload() {
+  if (fieldForm.value.is_static) {
+    const data = {
+      layout_field: Number(fieldForm.value.layout_field),
+      extraction_type: 'static',
+      value_source: fieldForm.value.value_source,
+      fixed_value: fieldForm.value.value_source === 'fixed' ? fieldForm.value.fixed_value.trim() : '',
+    }
+    if (fieldForm.value.value_source === 'catalog') {
+      data.catalog_model = fieldForm.value.catalog_model
+      data.catalog_object_id = Number(fieldForm.value.catalog_object_id)
+    }
+    return data
+  }
   if (isPdfTemplate.value) {
     return {
       layout_field: Number(fieldForm.value.layout_field),
@@ -173,12 +194,13 @@ async function loadTemplate() {
   loadError.value = null
 
   try {
-    const [data, layoutsData, fieldsData, catalogsData, rulesData] = await Promise.all([
+    const [data, layoutsData, fieldsData, catalogsData, rulesData, staticCatalogsData] = await Promise.all([
       templateService.getTemplate(supplierId, templateId),
       fetchAll((params) => layoutService.getLayouts(params)),
       fetchAll((params) => templateService.getTemplateFields(supplierId, templateId, params)),
       fetchAll((params) => catalogService.getCatalogs(supplierId, params)),
       fetchAll((params) => normalization.getRules(params)),
+      templateService.getStaticCatalogOptions(supplierId, templateId),
     ])
     const layout = await layoutService.getLayout(data.layout)
 
@@ -188,6 +210,7 @@ async function loadTemplate() {
     templateFields.value = fieldsData
     catalogs.value = catalogsData
     normalizationRules.value = rulesData
+    staticCatalogOptions.value = staticCatalogsData
     form.value = {
       layout: data.layout,
       document_type: data.document_type,
@@ -231,14 +254,36 @@ function openCreateField() {
   fieldError.value = null
   editingFieldId.value = null
   fieldForm.value = emptyFieldForm()
+  staticCatalogRecords.value = []
   showFieldForm.value = true
+}
+
+async function handleStaticCatalogModelChange() {
+  fieldForm.value.catalog_object_id = ''
+  staticCatalogRecords.value = []
+  if (!fieldForm.value.catalog_model) return
+
+  isLoadingCatalogRecords.value = true
+  try {
+    staticCatalogRecords.value = await templateService.getStaticCatalogRecords(
+      supplierId,
+      templateId,
+      fieldForm.value.catalog_model,
+    )
+  } catch (err) {
+    fieldError.value = err
+  } finally {
+    isLoadingCatalogRecords.value = false
+  }
 }
 
 function openEditField(field) {
   fieldError.value = null
   editingFieldId.value = field.id
+  const isStatic = field.extraction_type === 'static'
   fieldForm.value = {
     layout_field: field.layout_field,
+    is_static: isStatic,
     source_field: field.source_field || '',
     extraction_type: field.extraction_type || 'header_name',
     worksheet: field.worksheet || '',
@@ -249,14 +294,23 @@ function openEditField(field) {
     block_start_anchor: field.block_start_anchor || '',
     block_end_anchor: field.block_end_anchor || '',
     expected_data_type: field.expected_data_type || '',
+    value_source: field.value_source || 'fixed',
+    fixed_value: field.fixed_value || '',
+    catalog_model: field.catalog_model || '',
+    catalog_object_id: field.catalog_object_id || '',
   }
+  staticCatalogRecords.value = []
   showFieldForm.value = true
+  if (isStatic && field.value_source === 'catalog' && field.catalog_model) {
+    handleStaticCatalogModelChange()
+  }
 }
 
 function closeFieldForm() {
   showFieldForm.value = false
   editingFieldId.value = null
   fieldForm.value = emptyFieldForm()
+  staticCatalogRecords.value = []
 }
 
 function openCreateMapping(fieldId = '') {
@@ -322,13 +376,6 @@ async function handleSaveField() {
   fieldError.value = null
 
   try {
-    // if (
-    //   isPdfTemplate.value
-    //   && fieldForm.value.scope === 'line_item'
-    //   && form.value.pdf_extraction_mode !== 'text_and_tables'
-    // ) {
-    //   throw new Error('Los campos de partidas requieren el modo “Texto y tablas” en el template PDF.')
-    // }
     if (editingFieldId.value) {
       await templateService.patchTemplateField(
         supplierId,
@@ -344,7 +391,9 @@ async function handleSaveField() {
       )
       await loadFields()
       closeFieldForm()
-      openCreateMapping(createdField.id)
+      if (!fieldForm.value.is_static) {
+        openCreateMapping(createdField.id)
+      }
       return
     }
     await loadFields()
@@ -573,7 +622,8 @@ async function handleDelete() {
           <div>
             <h2 class="section__title">Campos mapeados</h2>
             <p class="section__hint">
-              Relaciona los campos del layout con las columnas del documento fuente.
+              Relaciona los campos del layout con las columnas del documento fuente, o
+              márcalos como valores estáticos (fijos o de catálogo).
             </p>
           </div>
           <button
@@ -602,14 +652,18 @@ async function handleDelete() {
             <div class="field-row__content">
               <span class="field-row__name">{{ field.layout_field_name }}</span>
               <span class="field-row__source">
-                ← {{ field.extraction_type === 'llm_text'
-                  ? (field.scope === 'line_item' ? `Partidas hasta: ${field.block_end_anchor}` : `Ancla: ${field.anchor_text}`)
-                  : field.source_field }}
+                ← {{ field.extraction_type === 'static'
+                  ? (field.value_source === 'fixed'
+                      ? `Fijo: ${field.fixed_value}`
+                      : `Catálogo: ${field.catalog_display_value}`)
+                  : field.extraction_type === 'llm_text'
+                    ? (field.scope === 'line_item' ? `Partidas hasta: ${field.block_end_anchor}` : `Ancla: ${field.anchor_text}`)
+                    : field.source_field }}
               </span>
               <span class="field-row__meta">
                 {{ field.extraction_type }}
                 <template v-if="field.worksheet"> · {{ field.worksheet }}</template>
-                <template v-if="field.header_occurrence !== null && field.header_occurrence !== undefined">
+                <template v-if="field.header_occurrence !== null && field.header_occurrence !== undefined && field.extraction_type !== 'static'">
                   · #{{ field.header_occurrence }}
                 </template>
               </span>
@@ -641,94 +695,161 @@ async function handleDelete() {
             </select>
           </div>
 
-          <div v-if="!isPdfTemplate" class="field">
-            <label class="field__label" for="source_field">
-              {{ isXmlTemplate ? 'XPath del XML' : 'Campo origen' }}
+          <div class="field">
+            <label class="field__label">Origen del dato</label>
+            <label class="checkbox-field">
+              <input v-model="fieldForm.is_static" type="checkbox" />
+              Valor estático (no se extrae del documento)
             </label>
-            <input
-              id="source_field"
-              v-model="fieldForm.source_field"
-              class="field__input field__input--mono"
-              type="text"
-              :placeholder="isXmlTemplate ? 'Selecciona un nodo del XML abajo' : 'Nombre de columna en el archivo'"
-              required
-            />
           </div>
 
-          <template v-if="isPdfTemplate">
+          <template v-if="fieldForm.is_static">
             <div class="field">
-              <label class="field__label" for="field_scope">Tipo de dato en el PDF</label>
-              <select id="field_scope" v-model="fieldForm.scope" class="field__input">
-                <option value="header">Encabezado (un valor por documento)</option>
-                <option value="line_item">Partida (un valor por renglón)</option>
+              <label class="field__label" for="value_source">Tipo de valor estático</label>
+              <select id="value_source" v-model="fieldForm.value_source" class="field__input">
+                <option value="fixed">Dato fijo</option>
+                <option value="catalog">Registro de un catálogo del sistema</option>
               </select>
             </div>
 
-            <template v-if="fieldForm.scope === 'header'">
-              <div class="field">
-                <label class="field__label" for="anchor_text">Texto ancla</label>
-                <input id="anchor_text" v-model="fieldForm.anchor_text" class="field__input" type="text" required />
-              </div>
-              <div class="field">
-                <label class="field__label" for="anchor_position">Ubicación del valor</label>
-                <select id="anchor_position" v-model="fieldForm.anchor_position" class="field__input" required>
-                  <option disabled value="">Selecciona una posición</option>
-                  <option value="after">Después del ancla</option>
-                  <option value="before">Antes del ancla</option>
-                  <option value="below">Debajo del ancla</option>
-                </select>
-              </div>
-            </template>
+            <div v-if="fieldForm.value_source === 'fixed'" class="field">
+              <label class="field__label" for="fixed_value">Valor</label>
+              <input
+                id="fixed_value"
+                v-model="fieldForm.fixed_value"
+                class="field__input"
+                type="text"
+                required
+              />
+            </div>
 
             <template v-else>
               <div class="field">
-                <label class="field__label" for="block_start_anchor">Inicio de partidas (opcional)</label>
-                <input id="block_start_anchor" v-model="fieldForm.block_start_anchor" class="field__input" type="text" />
+                <label class="field__label" for="catalog_model">Catálogo</label>
+                <select
+                  id="catalog_model"
+                  v-model="fieldForm.catalog_model"
+                  class="field__input"
+                  required
+                  @change="handleStaticCatalogModelChange"
+                >
+                  <option disabled value="">Selecciona un catálogo</option>
+                  <option v-for="opt in staticCatalogOptions" :key="opt.slug" :value="opt.slug">
+                    {{ opt.label }}
+                  </option>
+                </select>
               </div>
+
               <div class="field">
-                <label class="field__label" for="block_end_anchor">Fin de partidas (opcional)</label>
-                <input id="block_end_anchor" v-model="fieldForm.block_end_anchor" class="field__input" type="text" />
-                <p class="field__hint">Si lo dejas vacío, el sistema usa cortes genéricos como “Subtotal”, “Total” o “IVA”.</p>
+                <label class="field__label" for="catalog_object_id">Registro</label>
+                <select
+                  id="catalog_object_id"
+                  v-model="fieldForm.catalog_object_id"
+                  class="field__input"
+                  :disabled="!fieldForm.catalog_model || isLoadingCatalogRecords"
+                  required
+                >
+                  <option disabled value="">
+                    {{ isLoadingCatalogRecords ? 'Cargando…' : 'Selecciona un registro' }}
+                  </option>
+                  <option v-for="rec in staticCatalogRecords" :key="rec.id" :value="rec.id">
+                    {{ rec.label }}
+                  </option>
+                </select>
               </div>
             </template>
-
-            <div class="field">
-              <label class="field__label" for="expected_data_type">Tipo esperado (opcional)</label>
-              <select id="expected_data_type" v-model="fieldForm.expected_data_type" class="field__input">
-                <option value="">Sin especificar</option>
-                <option value="text">Texto</option>
-                <option value="date">Fecha</option>
-                <option value="amount">Monto</option>
-                <option value="number">Número</option>
-              </select>
-            </div>
-            <p class="field__hint field__hint--info">
-              Este campo se solicitará al LLM junto con los demás campos del PDF: se realiza una sola extracción por archivo.
-            </p>
           </template>
 
-          <div v-if="!isXmlTemplate && !isPdfTemplate" class="field-grid">
-            <div class="field">
-              <label class="field__label" for="worksheet">Hoja</label>
-              <input id="worksheet" v-model="fieldForm.worksheet" class="field__input" type="text" />
+          <template v-else>
+            <div v-if="!isPdfTemplate" class="field">
+              <label class="field__label" for="source_field">
+                {{ isXmlTemplate ? 'XPath del XML' : 'Campo origen' }}
+              </label>
+              <input
+                id="source_field"
+                v-model="fieldForm.source_field"
+                class="field__input field__input--mono"
+                type="text"
+                :placeholder="isXmlTemplate ? 'Selecciona un nodo del XML abajo' : 'Nombre de columna en el archivo'"
+                required
+              />
             </div>
-          </div>
 
-          <div v-if="!isXmlTemplate && !isPdfTemplate" class="field">
-            <label class="field__label" for="header_occurrence">Ocurrencia del encabezado</label>
-            <input
-              id="header_occurrence"
-              v-model="fieldForm.header_occurrence"
-              class="field__input"
-              type="number"
-              min="0"
+            <template v-if="isPdfTemplate">
+              <div class="field">
+                <label class="field__label" for="field_scope">Tipo de dato en el PDF</label>
+                <select id="field_scope" v-model="fieldForm.scope" class="field__input">
+                  <option value="header">Encabezado (un valor por documento)</option>
+                  <option value="line_item">Partida (un valor por renglón)</option>
+                </select>
+              </div>
+
+              <template v-if="fieldForm.scope === 'header'">
+                <div class="field">
+                  <label class="field__label" for="anchor_text">Texto ancla</label>
+                  <input id="anchor_text" v-model="fieldForm.anchor_text" class="field__input" type="text" required />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="anchor_position">Ubicación del valor</label>
+                  <select id="anchor_position" v-model="fieldForm.anchor_position" class="field__input" required>
+                    <option disabled value="">Selecciona una posición</option>
+                    <option value="after">Después del ancla</option>
+                    <option value="before">Antes del ancla</option>
+                    <option value="below">Debajo del ancla</option>
+                  </select>
+                </div>
+              </template>
+
+              <template v-else>
+                <div class="field">
+                  <label class="field__label" for="block_start_anchor">Inicio de partidas (opcional)</label>
+                  <input id="block_start_anchor" v-model="fieldForm.block_start_anchor" class="field__input" type="text" />
+                </div>
+                <div class="field">
+                  <label class="field__label" for="block_end_anchor">Fin de partidas (opcional)</label>
+                  <input id="block_end_anchor" v-model="fieldForm.block_end_anchor" class="field__input" type="text" />
+                  <p class="field__hint">Si lo dejas vacío, el sistema usa cortes genéricos como “Subtotal”, “Total” o “IVA”.</p>
+                </div>
+              </template>
+
+              <div class="field">
+                <label class="field__label" for="expected_data_type">Tipo esperado (opcional)</label>
+                <select id="expected_data_type" v-model="fieldForm.expected_data_type" class="field__input">
+                  <option value="">Sin especificar</option>
+                  <option value="text">Texto</option>
+                  <option value="date">Fecha</option>
+                  <option value="amount">Monto</option>
+                  <option value="number">Número</option>
+                </select>
+              </div>
+              <p class="field__hint field__hint--info">
+                Este campo se solicitará al LLM junto con los demás campos del PDF: se realiza una sola extracción por archivo.
+              </p>
+            </template>
+
+            <div v-if="!isXmlTemplate && !isPdfTemplate" class="field-grid">
+              <div class="field">
+                <label class="field__label" for="worksheet">Hoja</label>
+                <input id="worksheet" v-model="fieldForm.worksheet" class="field__input" type="text" />
+              </div>
+            </div>
+
+            <div v-if="!isXmlTemplate && !isPdfTemplate" class="field">
+              <label class="field__label" for="header_occurrence">Ocurrencia del encabezado</label>
+              <input
+                id="header_occurrence"
+                v-model="fieldForm.header_occurrence"
+                class="field__input"
+                type="number"
+                min="0"
+              />
+            </div>
+
+            <XmlXPathPicker
+              v-if="isXmlTemplate"
+              @select="fieldForm.source_field = $event"
             />
-          </div>
-
-          <XmlXPathPicker
-            v-if="isXmlTemplate"
-            @select="fieldForm.source_field = $event"
-          />
+          </template>
 
           <div class="confirm-row">
             <button class="btn btn--secondary" type="submit" :disabled="isSavingField">
@@ -835,7 +956,7 @@ async function handleDelete() {
             >
               <option disabled value="">Selecciona un campo</option>
               <option v-for="field in templateFields" :key="field.id" :value="field.id">
-                {{ field.layout_field_name }} ← {{ field.source_field }}
+                {{ field.layout_field_name }}
               </option>
             </select>
           </div>

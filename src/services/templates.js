@@ -94,6 +94,18 @@ const templateService = {
     )
   },
 
+    getStaticCatalogOptions(supplierId, templateId) {
+    return api.get(
+      `/suppliers/${supplierId}/templates/${templateId}/fields/static-catalog-options/`,
+    )
+  },
+
+  getStaticCatalogRecords(supplierId, templateId, catalogModel) {
+    return api.get(
+      `/suppliers/${supplierId}/templates/${templateId}/fields/static-catalog-options/${catalogModel}/records/`,
+    )
+  },
+
 }
 
 export default templateService
